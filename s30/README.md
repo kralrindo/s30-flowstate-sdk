@@ -16,6 +16,7 @@ client does today. Local, offline use only.
 | [docs/06-loader-client-s30.md](docs/06-loader-client-s30.md) | loader.dll on S30, the client_s30 product, offline platform patches |
 | [docs/07-console-and-logging.md](docs/07-console-and-logging.md) | engine print path, script print callbacks, SDK console |
 | [docs/08-imgui-overlay-and-concommands.md](docs/08-imgui-overlay-and-concommands.md) | ImGui overlay (DX12), S30 ConCommand/ICvar ABI, SDK commands |
+| [docs/09-server-connection-d1.md](docs/09-server-connection-d1.md) | workspace S3 dedi, S30 connect path, offline identity, bridge handshake (D1) |
 | [PROGRESS.md](PROGRESS.md) | progress log, open issues, next action |
 | [status/STATUS.md](status/STATUS.md) | table view of the status image |
 
@@ -31,6 +32,8 @@ client does today. Local, offline use only.
 | `tools/deploy_s30_client.ps1` | builds `build\s30_client` (hardlinked depot, patched exe, loader.dll + client_s30.dll) |
 | `tools/ida_query.py <i64> <cmd>` | headless IDA: strxref / decomp / disasm / callers |
 | `tools/post_keys.ps1` | posts keys/text to the test client window (overlay input tests) |
+| `tools/setup_s3_server.ps1` | builds the workspace S3 dedi (read-only copy + S30 net_prophuff.dat) |
+| `tools/start_s3_server.ps1` | starts it with a playlist and waits for ready |
 | `probe/build.bat` | builds the E0 boot probe (`probe.dll`) |
 | `tools/make_status.py <census.json>` | regenerates `status/status.svg` and `status/STATUS.md` from the census, `verified.json` and `milestones.json` |
 

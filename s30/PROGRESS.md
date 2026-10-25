@@ -50,18 +50,27 @@
   RegisterConCommand). SDK commands are real engine commands; proven by an engine-dispatched `sdk_status`.
 - Test tooling: command drop file, post_keys.ps1, sdk_screenshot, -s30_overlay.
 
+### 2026-10-26: server connection stage 1, D1 (docs/09)
+- Workspace S3 dedi (setup_s3_server.ps1 / start_s3_server.ps1). Needs r5apexdata.bin. Uses S30's net_prophuff.dat
+  (common_early.rpak wrap; differs from S21's in the last byte), per the user.
+- S30 connect path mapped; offline identity (Nucleus 9990000, tokens) decoded from IsPlatformLoggedIn and applied,
+  connect identity gates opened; native S30 challenge now goes out (type 18, encrypted).
+- Bridge handshake ported from S21: bridge_connect -> CONNACCEPT mp_rr_canyonlands_staging_mu1/survival; the dedi has
+  the client connected and starts signon. Milestone D1.
+- -s30_nettrace (loopback packet trace) and -s30_netdiag (connect path observers).
+
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
 - E0 boot probe.
 - C1 loader → client_s30, C2 offline + network guard.
 - SDK console with engine log capture and command input (part of C3).
 - C4: SDK working on the main menu -- ImGui overlay console/status/connect, engine-registered SDK commands.
+- D1: S3 dedi accepts the S30 client (bridge handshake).
 
 ## Open issues
 - Not yet known whether S30 checks its own image or import table (B6).
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
 ## Next action
-Server connection (phase D): start the S3 dedi from a workspace copy, trace what the S30 client sends on `connect`
-and what the dedi answers, map S30's net message table (B1), then port the bridge's connect handshake. In parallel,
-the S30 -> S3 server asset pipeline (phase E).
+Stage 2 (signon): map S30's net message table (B1) and the CNetChan/CClientState layouts, then feed the dedi's
+netchannel into the S30 engine. In parallel, the S30 -> S3 server asset pipeline (phase E).

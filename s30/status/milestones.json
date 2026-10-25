@@ -60,8 +60,9 @@
 				{
 					"id": "B5",
 					"name": "Connect/signon trace",
-					"state": "todo",
-					"test": "S30 connectionless packets and signon sequence documented"
+					"state": "wip",
+					"test": "S30 connectionless packets and signon sequence documented",
+					"note": "S30 connect path mapped (connect handlers, CClientState::Connect, challenge/resend, identity gates); netchannel stage next"
 				},
 				{
 					"id": "B6",
@@ -123,8 +124,9 @@
 				{
 					"id": "D1",
 					"name": "Challenge/connect",
-					"state": "todo",
-					"test": "dedi logs the S30 client as connected"
+					"state": "done",
+					"test": "dedi logs the S30 client as connected",
+					"note": "bridge_connect: C2S_CHALLENGE -> S2C_CHALLENGE -> C2S_CONNECT -> CONNACCEPT; dedi logs the client, signon 2 -> 3 (docs/09)"
 				},
 				{
 					"id": "D2",
@@ -205,8 +207,9 @@
 				{
 					"id": "F1",
 					"name": "Launch scripts",
-					"state": "todo",
-					"test": "one command starts dedi + S30 client from the workspace"
+					"state": "wip",
+					"test": "one command starts dedi + S30 client from the workspace",
+					"note": "setup_s3_server.ps1 + start_s3_server.ps1 + deploy_s30_client.ps1; no single combined launcher yet"
 				},
 				{
 					"id": "F2",
