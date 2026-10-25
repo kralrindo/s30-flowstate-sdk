@@ -61,6 +61,32 @@ def count(job):
 	return idx, out
 
 
+def name_for(text, start, end):
+	"""Name of the symbol a signature literal resolves, from its own statement only.
+
+	Looks, in order, at: a NETOBS_*(Name, ...) entry on the literal's own line; the
+	first GetPtr(x) / assignment target after the literal, up to the statement's ';';
+	an assignment target on the literal's own line before it. Never looks at earlier
+	statements (that attributed names to the wrong literal before).
+	"""
+	line_start = text.rfind("\n", 0, start) + 1
+	head = text[line_start:start]
+	hm = NAME_HINTS[0].search(head)
+	if hm:
+		return hm.group(1)
+	semi = text.find(";", end)
+	tail = text[end: semi if semi != -1 else end + 400]
+	for rx in NAME_HINTS[1:3]:
+		hm = rx.search(tail)
+		if hm:
+			return hm.group(1)
+	for rx in (re.compile(r"\b(\w+)\s*=\s*\w*FindPattern"), NAME_HINTS[2]):
+		hm = rx.search(head)
+		if hm:
+			return hm.group(1)
+	return None
+
+
 def extract(src_dir):
 	pats = []
 	for root, dirs, files in os.walk(src_dir):
@@ -79,14 +105,7 @@ def extract(src_dir):
 				if len(toks) < 3 or all(t.startswith("?") for t in toks):
 					continue
 				line = text.count("\n", 0, m.start()) + 1
-				ctx_start = text.rfind("\n", 0, max(0, m.start() - 200))
-				ctx = text[ctx_start: m.end() + 300]
-				name = None
-				for rx in NAME_HINTS:
-					hm = rx.search(ctx[ctx.find(m.group(0)[:20]) - 120 if ctx.find(m.group(0)[:20]) > 120 else 0:])
-					if hm:
-						name = hm.group(1)
-						break
+				name = name_for(text, m.start(), m.end())
 				pats.append({"file": rel, "line": line, "name": name, "pattern": " ".join(toks)})
 	return pats
 

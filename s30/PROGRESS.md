@@ -22,14 +22,26 @@
 - Boot reaches the window, D3D12 and EOS init, then idles, most likely waiting on EA/EOS sign-in.
 - IDA licence fixed by the user; S30 IDB built (`analysis\idb\r5apex_dx12_s30.exe.i64`).
 
+### 2026-10-25: loader.dll + client_s30 (docs/06)
+- loader.dll recognises S30.1 by TimeDateStamp: LauncherMain RVA 0x588C50 (verified via WinMain), worker
+  `client_s30.dll`, Saved Games retargeted to `Apex_s30`, and an early stage in DllMain that arms the network guard
+  before any host code runs. S21 paths unchanged.
+- New product `src/core_s30` (client_s30.dll): log, loopback guard, EA-app spawn watchdog, crash/exit capture, and the
+  S30 port of the S21 offline platform patches (D/E/A1/A2/C, plus F = Origin env-setting Error() and P = Origin poll).
+- Result: the S30 client boots through Origin init and stays up (75 s+, no fault, no exit), fully guarded.
+- Found: the earlier probe runs wrote the live Saved Games settings (now prevented) and most likely started the EA
+  app (now refused).
+- Census tool: fixed name attribution (names came from the previous statement); counts unchanged.
+
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
-- E0 boot probe (C1/C2/B6 in progress).
+- E0 boot probe.
+- C1 loader → client_s30, C2 offline + network guard.
 
 ## Open issues
 - Not yet known whether S30 checks its own image or import table (B6).
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
 ## Next action
-Find where S30 waits after EOS init (IDA, static) and stub it offline in the probe. Target: main menu (C4) with
-the guard still showing zero allowed external traffic.
+SDK console and engine print capture on S30 (find the real Script_PrintFunc / engine spew on S30.1), then take
+control of the UI script flow (loose-script override of `script_ui.rpak`) toward C4 (main menu with SDK console).

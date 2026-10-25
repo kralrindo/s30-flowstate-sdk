@@ -13,6 +13,7 @@ client does today. Local, offline use only.
 | [docs/03-s21-vs-s30.md](docs/03-s21-vs-s30.md) | measured differences and the compatibility matrix |
 | [docs/04-plan.md](docs/04-plan.md) | minimum change set, ranked risks, first experiment, phases and milestones |
 | [docs/05-e0-boot-probe.md](docs/05-e0-boot-probe.md) | first runtime experiment: injection, network guard, boot |
+| [docs/06-loader-client-s30.md](docs/06-loader-client-s30.md) | loader.dll on S30, the client_s30 product, offline platform patches |
 | [PROGRESS.md](PROGRESS.md) | progress log, open issues, next action |
 | [status/STATUS.md](status/STATUS.md) | table view of the status image |
 
@@ -25,6 +26,8 @@ client does today. Local, offline use only.
 | `tools/strings_diff.py <a.exe> <b.exe> <outdir> a b` | string and RTTI diff by family (net messages, convars, launch params, natives) |
 | `tools/pe_info.py <exe>...` | PE header facts and section entropy (packed or not) |
 | `tools/add_import.py <in.exe> <out.exe> <dll> <func>` | adds an import to a PE copy through a `.l2` section (never in place) |
+| `tools/deploy_s30_client.ps1` | builds `build\s30_client` (hardlinked depot, patched exe, loader.dll + client_s30.dll) |
+| `tools/ida_query.py <i64> <cmd>` | headless IDA: strxref / decomp / disasm / callers |
 | `probe/build.bat` | builds the E0 boot probe (`probe.dll`) |
 | `tools/make_status.py <census.json>` | regenerates `status/status.svg` and `status/STATUS.md` from the census, `verified.json` and `milestones.json` |
 

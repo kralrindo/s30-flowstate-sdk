@@ -68,7 +68,7 @@
 					"name": "Integrity checks",
 					"state": "wip",
 					"test": "S30 code-integrity / import checks found or ruled out",
-					"note": "no integrity kill in 400 s idle boot with an added import (E0); .text hooks untested"
+					"note": "no integrity reaction to an added import + 7 .text patches over a 75 s run; longer sessions untested"
 				}
 			]
 		},
@@ -78,16 +78,16 @@
 				{
 					"id": "C1",
 					"name": "Loader injects",
-					"state": "wip",
-					"test": "patched S30 exe copy loads loader.dll -> client_s30.dll, log line at boot",
-					"note": "E0: patched S30 copy loads s30probe.dll via an added .l2 import; loader/client_s30 product next"
+					"state": "done",
+					"test": "patched S30 copy loads loader.dll -> client_s30.dll; S30_EarlyInit and SDK_Init both log",
+					"note": "loader.dll (S30 image table, LauncherMain 0x588C50) loads client_s30.dll; early init + SDK_Init both run (docs/06)"
 				},
 				{
 					"id": "C2",
 					"name": "Offline + net guard",
-					"state": "wip",
+					"state": "done",
 					"test": "no non-loopback connection during boot (guard log + netstat)",
-					"note": "E0: loopback guard armed in DllMain, refused all 10 outbound lookups; offline stubs next"
+					"note": "guard refuses all non-loopback traffic from DllMain on; EA app spawn refused; Origin offline patches D/E/A1/A2/C/F/P applied; client stays up"
 				},
 				{
 					"id": "C3",
