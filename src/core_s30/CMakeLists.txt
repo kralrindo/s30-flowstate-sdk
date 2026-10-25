@@ -12,9 +12,15 @@ add_module( "shared_lib" "client_s30" "" ${FOLDER_CONTEXT} TRUE TRUE )
 start_sources()
 
 add_sources( SOURCE_GROUP "Core"
+    "console_s30.cpp"
+    "console_s30.h"
     "crash_s30.cpp"
     "crash_s30.h"
     "dllmain_client_s30.cpp"
+    "engine_log_s30.cpp"
+    "engine_log_s30.h"
+    "script_print_s30.cpp"
+    "script_print_s30.h"
     "s30_image.h"
     "s30_log.cpp"
     "s30_log.h"

@@ -8,7 +8,10 @@
 
 void S30Log_Init(void);
 void S30Log_Shutdown(void);
+// File + SDK console.
 void S30Log(const char* pszFormat, ...);
+// File only (lines the console already shows in their own form, e.g. engine log).
+void S30LogFile(const char* pszFormat, ...);
 
 // Module + offset of an address ("r5apex_dx12.exe+0x588C50"), for blame lines.
 void S30Log_FormatAddress(const void* pAddress, char* pszOut, unsigned long nOut);

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <share.h>
 #include "s30_log.h"
+#include "console_s30.h"
 
 static FILE* s_pLogFile = nullptr;
 static CRITICAL_SECTION s_logLock;
@@ -52,19 +53,15 @@ void S30Log_Shutdown(void)
 	LeaveCriticalSection(&s_logLock);
 }
 
-void S30Log(const char* pszFormat, ...)
+static void Log_Write(const bool bConsole, const char* pszFormat, va_list args)
 {
 	if (!s_bLogInit)
 		return;
 
-	char szLine[2048];
+	char szLine[4096];
 	const int nPrefix = snprintf(szLine, sizeof(szLine), "[%9.3f] [%5lu] ",
 		(GetTickCount64() - s_nLogStartMs) / 1000.0, GetCurrentThreadId());
-
-	va_list args;
-	va_start(args, pszFormat);
 	vsnprintf(szLine + nPrefix, sizeof(szLine) - nPrefix, pszFormat, args);
-	va_end(args);
 
 	EnterCriticalSection(&s_logLock);
 	if (s_pLogFile)
@@ -73,7 +70,24 @@ void S30Log(const char* pszFormat, ...)
 		fflush(s_pLogFile);
 	}
 	LeaveCriticalSection(&s_logLock);
-	OutputDebugStringA(szLine);
+	if (bConsole)
+		S30Console_Write(szLine + nPrefix, S30ConsoleColor_t::SDK);
+}
+
+void S30Log(const char* pszFormat, ...)
+{
+	va_list args;
+	va_start(args, pszFormat);
+	Log_Write(true, pszFormat, args);
+	va_end(args);
+}
+
+void S30LogFile(const char* pszFormat, ...)
+{
+	va_list args;
+	va_start(args, pszFormat);
+	Log_Write(false, pszFormat, args);
+	va_end(args);
 }
 
 void S30Log_FormatAddress(const void* pAddress, char* pszOut, unsigned long nOut)

@@ -81,12 +81,27 @@ static void NetGuard_FormatAddr(const sockaddr* pAddr, char* pszOut, size_t nOut
 	snprintf(pszOut, nOut, "%s:%u", szHost, nPort);
 }
 
+// Per-destination rate limit: the first few hits of a destination are logged,
+// then every 500th. Fixed table, no allocation; a hash collision merges counts.
+static volatile LONG s_nHitsByKey[512] = {};
+
 static void NetGuard_Block(const char* pszWhat, const char* pszTarget, const void* pCaller)
 {
+	InterlockedIncrement(&s_nBlocked);
+	unsigned int nHash = 2166136261u;
+	for (const char* p = pszWhat; *p; ++p)
+		nHash = (nHash ^ static_cast<unsigned char>(*p)) * 16777619u;
+	// Port excluded: relay pings cycle ports on the same hosts.
+	for (const char* p = pszTarget ? pszTarget : ""; *p && *p != ':'; ++p)
+		nHash = (nHash ^ static_cast<unsigned char>(*p)) * 16777619u;
+	const LONG nHits = InterlockedIncrement(&s_nHitsByKey[nHash % 512]);
+	if (nHits > 3 && nHits % 500 != 0)
+		return;
+
 	char szCaller[MAX_PATH];
 	S30Log_FormatAddress(pCaller, szCaller, sizeof(szCaller));
-	InterlockedIncrement(&s_nBlocked);
-	S30Log("[NET-GUARD] BLOCKED %s %s (caller %s)\n", pszWhat, pszTarget ? pszTarget : "(null)", szCaller);
+	S30Log("[NET-GUARD] BLOCKED %s %s (caller %s)%s\n", pszWhat, pszTarget ? pszTarget : "(null)", szCaller,
+		nHits == 3 ? " -- further hits of this destination are counted, not logged" : "");
 }
 
 static void NetGuard_Narrow(PCWSTR pwszIn, char* pszOut, int nOut)

@@ -14,6 +14,9 @@
 #include "offline_s30.h"
 #include "origin_offline_s30.h"
 #include "crash_s30.h"
+#include "console_s30.h"
+#include "engine_log_s30.h"
+#include "script_print_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -34,7 +37,7 @@ static BOOL CALLBACK BootWatch_EnumWindow(HWND hWnd, LPARAM lParam)
 		GetWindowTextA(hWnd, szTitle, sizeof(szTitle));
 		RECT rc = {};
 		GetClientRect(hWnd, &rc);
-		S30Log("[BOOT] window \"%s\" %ldx%ld\n", szTitle, rc.right, rc.bottom);
+		S30LogFile("[BOOT] window \"%s\" %ldx%ld\n", szTitle, rc.right, rc.bottom);
 		++*reinterpret_cast<int*>(lParam);
 	}
 	return TRUE;
@@ -56,17 +59,19 @@ static DWORD WINAPI BootWatch_Thread(LPVOID)
 			{
 				char szName[MAX_PATH];
 				if (GetModuleBaseNameA(GetCurrentProcess(), hModules[i], szName, sizeof(szName)))
-					S30Log("[BOOT] module %s\n", szName);
+					S30LogFile("[BOOT] module %s\n", szName);
 			}
 			nLastModules = nModules;
 		}
+		if (nSec == 20 || nSec == 40)
+			S30ScriptPrint_Diag();
 		if (nSec <= 10 || nSec % 10 == 0)
 		{
 			int nWindows = 0;
 			EnumWindows(BootWatch_EnumWindow, reinterpret_cast<LPARAM>(&nWindows));
 			PROCESS_MEMORY_COUNTERS pmc = {};
 			GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
-			S30Log("[BOOT] t=%ds windows=%d modules=%lu ws=%lluMB net_blocked=%ld\n", nSec, nWindows, nModules,
+			S30LogFile("[BOOT] t=%ds windows=%d modules=%lu ws=%lluMB net_blocked=%ld\n", nSec, nWindows, nModules,
 				static_cast<unsigned long long>(pmc.WorkingSetSize >> 20), S30NetGuard_BlockedCount());
 		}
 	}
@@ -81,6 +86,7 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 		return true;
 
 	S30Log_Init();
+	S30Console_Init();
 	const S30Image_t* const pImage = S30Image_Get();
 	S30Log("[S30] client_s30 early init, host base %p\n", reinterpret_cast<void*>(S30Image_Base()));
 	if (!pImage)
@@ -100,6 +106,9 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	// A failed patch is not a network risk (the spawn watchdog still refuses the
 	// EA app); the client then exits on its own, which the log explains.
 	S30OriginOffline_Apply();
+	S30EngineLog_Install();
+	S30ScriptPrint_Install();
+	S30Console_StartInput();
 
 	s_bEarlyInitDone = true;
 	return true;
