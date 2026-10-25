@@ -14,6 +14,7 @@ client does today. Local, offline use only.
 | [docs/04-plan.md](docs/04-plan.md) | minimum change set, ranked risks, first experiment, phases and milestones |
 | [docs/05-e0-boot-probe.md](docs/05-e0-boot-probe.md) | first runtime experiment: injection, network guard, boot |
 | [docs/06-loader-client-s30.md](docs/06-loader-client-s30.md) | loader.dll on S30, the client_s30 product, offline platform patches |
+| [docs/07-console-and-logging.md](docs/07-console-and-logging.md) | engine print path, script print callbacks, SDK console |
 | [PROGRESS.md](PROGRESS.md) | progress log, open issues, next action |
 | [status/STATUS.md](status/STATUS.md) | table view of the status image |
 

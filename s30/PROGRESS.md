@@ -33,15 +33,25 @@
   app (now refused).
 - Census tool: fixed name attribution (names came from the previous statement); counts unchanged.
 
+### 2026-10-25: SDK console + engine/script output (docs/07)
+- Engine print path mapped: CoreMsg 0x269B40 (241 refs) -> CoreMsgV 0xD39C30 -> LoggingSystem_LogV 0x5C7680
+  (severity filter) -> LogDirect 0x5C6C40. client_s30 hooks CoreMsgV + LogDirect; retail emits almost nothing.
+- SDK console window "R5F S30 Client": engine/script/SDK output, commands via Cbuf_AddText (0x248760, identical to
+  S21). Verified end to end: `quit` from the console path shuts the engine down cleanly.
+- Script print callbacks hooked (0xF5B1D0 client/server, 0xF5B2B0 UI); the UI VM's print pointer is confirmed to be
+  the hooked one, but retail UI scripts call printl 0 times at the title screen.
+- Retail strips command bodies (echo = return 0): useful commands must come from the SDK.
+
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
 - E0 boot probe.
 - C1 loader → client_s30, C2 offline + network guard.
+- SDK console with engine log capture and command input (part of C3).
 
 ## Open issues
 - Not yet known whether S30 checks its own image or import table (B6).
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
 ## Next action
-SDK console and engine print capture on S30 (find the real Script_PrintFunc / engine spew on S30.1), then take
-control of the UI script flow (loose-script override of `script_ui.rpak`) toward C4 (main menu with SDK console).
+Check the S30 ConVar/ConCommand ABI against S21 (ICommandLine already lost a vtable slot), then register the first
+SDK ConCommands in client_s30 so the console has working commands; after that, script loading (B3/C5).

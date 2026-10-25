@@ -2,9 +2,11 @@
 
 usage: ida_query.py <db.i64> <command> [args...]  (several commands may be chained with ' ; ')
   strxref <text>        functions referencing a string that contains <text> (RVA + name)
+  strexact <text>       strings exactly equal to <text>, with xrefs
   decomp <rva|name>     Hex-Rays pseudocode of the function containing <rva>
   disasm <rva> [n]      n instructions from <rva>
   callers <rva>         call sites of the function containing <rva>
+  xrefs <rva> [n]       all code + data references to the function containing <rva>
   name <rva> <name>     rename the function at <rva> (saved)
 RVAs are hex, relative to the image base.
 """
@@ -55,6 +57,15 @@ def cmd_strxref(text):
 			break
 
 
+def cmd_strexact(text):
+	"""Strings equal to <text> (short names like 'echo' that substring search drowns)."""
+	for s in idautils.Strings():
+		if str(s) == text:
+			print("string %s %r" % (rva(s.ea), text))
+			for x in idautils.XrefsTo(s.ea):
+				print("   xref %s in %s" % (rva(x.frm), fname(x.frm)))
+
+
 def cmd_decomp(target):
 	e = ea(target)
 	f = ida_funcs.get_func(e)
@@ -82,6 +93,16 @@ def cmd_callers(target):
 		print("   call %s in %s" % (rva(x), fname(x)))
 
 
+def cmd_xrefs(target, limit="40"):
+	"""All references (code and data) to the function containing <rva>."""
+	f = ida_funcs.get_func(ea(target))
+	start = f.start_ea if f else ea(target)
+	refs = list(idautils.XrefsTo(start))
+	print("   %d refs" % len(refs))
+	for x in refs[: int(limit)]:
+		print("   %s %s in %s" % ("code" if x.iscode else "data", rva(x.frm), fname(x.frm)))
+
+
 def cmd_name(target, new):
 	ida_name.set_name(ea(target), new, ida_name.SN_FORCE)
 	print("named", target, new)
@@ -105,7 +126,7 @@ def main():
 		if not fn:
 			print("unknown command", parts[0])
 			continue
-		fn(*parts[1:]) if parts[0] != "strxref" else fn(chunk.split(None, 1)[1])
+		fn(*parts[1:]) if parts[0] not in ("strxref", "strexact") else fn(chunk.split(None, 1)[1])
 		save = save or parts[0] == "name"
 	idapro.close_database(save=save)
 

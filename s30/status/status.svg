@@ -833,8 +833,8 @@
 <rect x="926.2" y="218.5" width="78.2" height="69.6" fill="#3fb950"><title>C2 Offline + net guard: no non-loopback connection during boot (guard log + netstat)</title></rect>
 <text x="930.2" y="233.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">C2</text>
 <text x="930.2" y="248.5" fill="#ffffff" font-size="11">Offline + n…</text>
-<rect x="1006.5" y="218.5" width="78.2" height="69.6" fill="#5b616b"><title>C3 Core detours: tier0/tier1/convar/cmd/filesystem resolve and attach on S30</title></rect>
-<text x="1010.5" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">C3</text>
+<rect x="1006.5" y="218.5" width="78.2" height="69.6" fill="#b8860b"><title>C3 Core detours: tier0/tier1/convar/cmd/filesystem resolve and attach on S30</title></rect>
+<text x="1010.5" y="233.5" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">C3</text>
 <text x="1010.5" y="248.5" fill="#ffffff" font-size="11">Core detours</text>
 <rect x="846.0" y="290.1" width="78.2" height="69.6" fill="#5b616b"><title>C4 Main menu: client reaches the main menu with SDK console</title></rect>
 <text x="850.0" y="305.1" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">C4</text>
@@ -913,5 +913,5 @@
 <text x="774" y="584" fill="#a8adb5" font-size="13">in progress</text>
 <rect x="858" y="574" width="12" height="12" fill="#5b616b"/>
 <text x="875" y="584" fill="#a8adb5" font-size="13">not started</text>
-<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-25 20:13 UTC</text>
+<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-25 20:39 UTC</text>
 </svg>

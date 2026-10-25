@@ -92,8 +92,9 @@
 				{
 					"id": "C3",
 					"name": "Core detours",
-					"state": "todo",
-					"test": "tier0/tier1/convar/cmd/filesystem resolve and attach on S30"
+					"state": "wip",
+					"test": "tier0/tier1/convar/cmd/filesystem resolve and attach on S30",
+					"note": "engine log (CoreMsgV/LogDirect), Cbuf_AddText, script print callbacks verified on S30 (docs/07); convar/filesystem not yet"
 				},
 				{
 					"id": "C4",
