@@ -17,6 +17,9 @@
 #include "console_s30.h"
 #include "engine_log_s30.h"
 #include "script_print_s30.h"
+#include "sdk_commands_s30.h"
+#include "overlay_s30.h"
+#include "concommand_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -65,6 +68,13 @@ static DWORD WINAPI BootWatch_Thread(LPVOID)
 		}
 		if (nSec == 20 || nSec == 40)
 			S30ScriptPrint_Diag();
+		// Engine registration waits for the engine's own statics (ICvar ready).
+		static bool s_bEngineCommandsDone = false;
+		if (!s_bEngineCommandsDone && S30ConCommand_IsReady())
+		{
+			s_bEngineCommandsDone = true;
+			S30ConCommand_RegisterSdkCommands();
+		}
 		if (nSec <= 10 || nSec % 10 == 0)
 		{
 			int nWindows = 0;
@@ -108,6 +118,8 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30OriginOffline_Apply();
 	S30EngineLog_Install();
 	S30ScriptPrint_Install();
+	S30Commands_RegisterBuiltins();
+	S30ConCommand_Init();
 	S30Console_StartInput();
 
 	s_bEarlyInitDone = true;
@@ -129,6 +141,8 @@ extern "C" __declspec(dllexport) void SDK_Init(void)
 	}
 
 	S30Log("[S30] SDK_Init at LauncherMain gate\n");
+	// Not in early init: creating the vtable probe device under the loader lock is unsafe.
+	S30Overlay_Install();
 	CloseHandle(CreateThread(NULL, 0, BootWatch_Thread, NULL, 0, NULL));
 }
 

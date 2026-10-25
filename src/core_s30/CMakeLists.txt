@@ -12,6 +12,8 @@ add_module( "shared_lib" "client_s30" "" ${FOLDER_CONTEXT} TRUE TRUE )
 start_sources()
 
 add_sources( SOURCE_GROUP "Core"
+    "concommand_s30.cpp"
+    "concommand_s30.h"
     "console_s30.cpp"
     "console_s30.h"
     "crash_s30.cpp"
@@ -25,6 +27,14 @@ add_sources( SOURCE_GROUP "Core"
     "s30_log.cpp"
     "s30_log.h"
     "s30_pattern.h"
+    "sdk_commands_s30.cpp"
+    "sdk_commands_s30.h"
+)
+
+add_sources( SOURCE_GROUP "Overlay"
+    "overlay_panels_s30.cpp"
+    "overlay_s30.cpp"
+    "overlay_s30.h"
 )
 
 add_sources( SOURCE_GROUP "Platform"
@@ -39,9 +49,16 @@ add_sources( SOURCE_GROUP "Platform"
 target_link_libraries( ${PROJECT_NAME} PRIVATE
     "ws2_32.lib"
     "shlwapi.lib"
+    "d3d12.lib"
+    "dxgi.lib"
+    "d3dcompiler.lib"
     "libdetours"
+    "libimgui"
 )
 
 end_sources()
+
+# ImGui backends include "imgui.h" by bare name.
+target_include_directories( ${PROJECT_NAME} PRIVATE "${THIRDPARTY_SOURCE_DIR}/imgui/" )
 
 r5sdk_attach_pe_identity( ${PROJECT_NAME} )
