@@ -80,6 +80,7 @@ add_subdirectory( engine )
 add_subdirectory( vguimatsurface )
 add_subdirectory( vgui )
 add_subdirectory( loader )
+add_subdirectory( core_s30 )
 
 set( FOLDER_CONTEXT "Game" )
 add_subdirectory( vscript )

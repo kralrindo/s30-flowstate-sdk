@@ -1,6 +1,6 @@
 //===========================================================================//
 //
-// Purpose: command-line staging loader for the S21 SDK worker DLL.
+// Purpose: command-line staging loader for the S21 and S30 SDK worker DLLs.
 //
 //===========================================================================//
 #include "loader.h"
@@ -70,7 +70,7 @@ static const wchar_t* const kDediStagedFlag = L"-dedicated";
 static const wchar_t* const kWorkerShaArg = L"-r5sdk_worker_sha256";
 
 // Live-client default flags (double-click / cold start).
-// -fnf selects /Respawn/Apex_fnf (retargeted to Apex_r5f below). Without it
+// -fnf selects /Respawn/Apex_fnf (retargeted to Apex_r5f / Apex_s30 below). Without it
 // CheckParm misses and videoconfig/profile land in live /Respawn/Apex.
 static const wchar_t* const kClientExtraArgs =
 	L" -nodiscord -forceSendTable -novid -windowed -allowmultiple -fnf";
@@ -91,6 +91,28 @@ static LPWSTR (WINAPI* v_GetCommandLineW)(void) = nullptr;
 static const uintptr_t kClientLauncherMainRvaDx11 = 0x501C90;
 static const uintptr_t kClientLauncherMainRvaDx12 = 0x532180;
 static const uintptr_t kDediLauncherMainRva = 0x44C240;
+
+// S30 client images. Keyed on the PE TimeDateStamp: SizeOfImage changes once the
+// import section is added. LauncherMain verified by WinMain's call (0x589F30 ->
+// 0x588C50 on S30.1). Unknown images keep the S21 path exactly as before.
+struct LoaderS30Image_t
+{
+	DWORD nTimeDateStamp;
+	uintptr_t nLauncherMainRva;
+	const char* pszBuild;
+};
+
+static const LoaderS30Image_t kS30Images[] =
+{
+	{ 0x6AAB34CEu, 0x588C50, "R5pc_r5-301_J28_CL11570498" },
+};
+
+static const char* const kClientS30SdkModule = "client_s30.dll";
+static const wchar_t* const kClientS30SdkModuleW = L"client_s30.dll";
+// Same length as "fnf": /Respawn/Apex_fnf -> /Respawn/Apex_s30, apart from live
+// /Respawn/Apex and the S21 build's /Respawn/Apex_r5f.
+static const char kSavedGamesTailS21[] = "r5f";
+static const char kSavedGamesTailS30[] = "s30";
 
 static int (*v_LauncherMain)(HINSTANCE, HINSTANCE, LPSTR, int) = nullptr;
 
@@ -129,6 +151,28 @@ static bool Loader_IsDx12Exe(void)
 	if (GetModuleFileNameW(NULL, path, MAX_PATH) == 0)
 		return false;
 	return wcsstr(path, L"dx12") != nullptr;
+}
+
+// S30 client image this process runs, or null (S21 client, dedi, unknown).
+static const LoaderS30Image_t* Loader_GetS30Image(void)
+{
+	const HMODULE hExe = GetModuleHandleW(NULL);
+	if (!hExe)
+		return nullptr;
+	const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(hExe);
+	if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+		return nullptr;
+	const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+		reinterpret_cast<const BYTE*>(hExe) + dos->e_lfanew);
+	if (nt->Signature != IMAGE_NT_SIGNATURE)
+		return nullptr;
+
+	for (const LoaderS30Image_t& image : kS30Images)
+	{
+		if (nt->FileHeader.TimeDateStamp == image.nTimeDateStamp)
+			return &image;
+	}
+	return nullptr;
 }
 
 //-----------------------------------------------------------------------------
@@ -202,7 +246,8 @@ static bool Loader_ResolveWorkerPathW(
 	if (!Loader_GetHostDirW(hostDir, MAX_PATH))
 		return false;
 
-	const wchar_t* const leaf = bDedicated ? kServerSdkModuleW : kClientSdkModuleW;
+	const wchar_t* const leaf = bDedicated ? kServerSdkModuleW
+		: (Loader_GetS30Image() ? kClientS30SdkModuleW : kClientSdkModuleW);
 	wchar_t joined[MAX_PATH];
 	if (_snwprintf_s(joined, _TRUNCATE, L"%s%s", hostDir, leaf) < 0)
 		return false;
@@ -568,7 +613,7 @@ static bool Loader_AuthenticateWorker(
 static void Loader_RetargetSavedGamesFolder(void)
 {
 	static const char kNeedle[] = "/Respawn/Apex_fnf";
-	static const char kNewTail[] = "r5f";
+	const char* const kNewTail = Loader_GetS30Image() ? kSavedGamesTailS30 : kSavedGamesTailS21;
 	const size_t needleLen = sizeof(kNeedle);
 	const size_t tailOff = sizeof(kNeedle) - 1u - 3u;
 
@@ -657,7 +702,7 @@ static void Loader_RetargetSavedGamesFolder(void)
 			memcpy(dest, kNewTail, 3);
 			DWORD tmp = 0;
 			VirtualProtect(dest, 3, oldProt, &tmp);
-			Loader_Trace("[FNF] retargeted Saved Games @ %p -> Apex_r5f\n", dest);
+			Loader_Trace("[FNF] retargeted Saved Games @ %p -> Apex_%s\n", dest, kNewTail);
 			return;
 		}
 	}
@@ -847,7 +892,8 @@ static bool Loader_RelaunchIfMissingFlags(void)
 static void Loader_GatedInitSdk(void)
 {
 	const bool bDedicated = Loader_IsDedicatedExe();
-	const char* const moduleName = bDedicated ? kServerSdkModule : kClientSdkModule;
+	const char* const moduleName = bDedicated ? kServerSdkModule
+		: (Loader_GetS30Image() ? kClientS30SdkModule : kClientSdkModule);
 
 	wchar_t hostDir[MAX_PATH] = {};
 	wchar_t workerPath[MAX_PATH] = {};
@@ -907,6 +953,50 @@ static void Loader_GatedInitSdk(void)
 
 	pfnSDKInit();
 	Loader_Trace("  SDK_Init returned; calling real LauncherMain\n");
+}
+
+//-----------------------------------------------------------------------------
+// S30 only: load client_s30.dll from DllMain and run its S30_EarlyInit (log,
+// loopback-only network guard, platform-spawn watchdog) before any host code.
+// WinMain runs a dozen init calls before LauncherMain, and the S30 host starts
+// resolving Respawn/EA hosts early, so the guard cannot wait for the gate.
+// The worker's own DllMain is empty and its imports are already mapped by the
+// host, which keeps the nested load under the loader lock safe.
+//-----------------------------------------------------------------------------
+static void Loader_S30EarlyInit(void)
+{
+	wchar_t hostDir[MAX_PATH] = {};
+	wchar_t workerPath[MAX_PATH] = {};
+	if (!Loader_ResolveWorkerPathW(false, workerPath, MAX_PATH, hostDir, MAX_PATH))
+	{
+		Loader_FatalError("[SEC-LOADER] Failed to resolve absolute path for client_s30.dll next to host.");
+		return;
+	}
+	if (!Loader_AuthenticateWorker(workerPath, false, kClientS30SdkModule))
+	{
+		Loader_FatalError("[SEC-LOADER] Authenticity check failed for client_s30.dll. Refusing to start.");
+		return;
+	}
+
+	const HMODULE sdk = LoadLibraryExW(workerPath, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+	if (!sdk)
+	{
+		char buf[256];
+		wsprintfA(buf, "[SEC-LOADER] Failed to load client_s30.dll early (error 0x%08X).", (unsigned)GetLastError());
+		Loader_FatalError(buf);
+		return;
+	}
+
+	typedef bool (*PFN_S30_EarlyInit)(void);
+	const PFN_S30_EarlyInit pfnEarlyInit =
+		reinterpret_cast<PFN_S30_EarlyInit>(GetProcAddress(sdk, "S30_EarlyInit"));
+	if (!pfnEarlyInit || !pfnEarlyInit())
+	{
+		// No guard, no run: the S30 host must never reach the network unguarded.
+		Loader_FatalError("[SEC-LOADER] client_s30.dll S30_EarlyInit missing or failed. Refusing to start.");
+		return;
+	}
+	Loader_Trace("[S30] early init done (network guard armed)\n");
 }
 
 static int hkLauncherMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
@@ -999,10 +1089,18 @@ static bool Loader_ResolveLauncherMain(void)
 	else
 	{
 		FARPROC exp = GetProcAddress(hExe, "LauncherMain");
+		const LoaderS30Image_t* const pS30 = Loader_GetS30Image();
 		if (exp)
 		{
 			v_LauncherMain = reinterpret_cast<int (*)(HINSTANCE, HINSTANCE, LPSTR, int)>(exp);
 			Loader_Trace("  LauncherMain @ %p (export)\n", (void*)exp);
+		}
+		else if (pS30)
+		{
+			v_LauncherMain = reinterpret_cast<int (*)(HINSTANCE, HINSTANCE, LPSTR, int)>(
+				exeBase + pS30->nLauncherMainRva);
+			Loader_Trace("  LauncherMain @ %p (S30 %s RVA 0x%zX)\n",
+				(void*)v_LauncherMain, pS30->pszBuild, (size_t)pS30->nLauncherMainRva);
 		}
 		else
 		{
@@ -1083,6 +1181,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID /*lpReserved*/)
 		// never returns on success.
 		if (Loader_RelaunchIfMissingFlags())
 			return FALSE;
+
+		if (Loader_GetS30Image())
+			Loader_S30EarlyInit();
 
 		Loader_InstallFnfCommandLine();
 		Loader_RetargetSavedGamesFolder();
