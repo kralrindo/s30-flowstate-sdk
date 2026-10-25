@@ -52,7 +52,7 @@ These five have server data in the reference dedi under the same name, built fro
 | r5ed | `056aad5` 2026-10-14 | map compiler (not needed here) |
 | s30-port-kit | `1e59657` 2026-10-24 | proven S30→S21 **map** pipeline incl. dedi rpak (docs/05) |
 | revpk | built from the SDK | dedi VPKs |
-| IDA Pro 9.1 | `C:\Program Files\IDA Professional 9.1` | existing S21 DX12 and S3 dedi IDBs in `Documents\apex\RE\idb`. Headless use fails ("Cannot continue without a valid license"), so S30 analysis uses capstone, pefile and `.pdata`. |
+| IDA Pro 9.1 | `C:\Program Files\IDA Professional 9.1` | existing S21 DX12 and S3 dedi IDBs in `Documents\apex\RE\idb`. S30 IDB built in batch mode (`idat -B`): `analysis\idb\r5apex_dx12_s30.exe.i64`. |
 | Python | capstone 5.0.8, pefile, lief 0.17.6, minidump, frida 17 | analysis scripts in `s30/tools` |
 | cdb | Windows Kits 10 Debuggers x64 | crash triage |
 

@@ -12,6 +12,7 @@ client does today. Local, offline use only.
 | [docs/02-architecture.md](docs/02-architecture.md) | how the S21 client talks to the S3 dedi (injection, net bridge, tables, scripts, assets) |
 | [docs/03-s21-vs-s30.md](docs/03-s21-vs-s30.md) | measured differences and the compatibility matrix |
 | [docs/04-plan.md](docs/04-plan.md) | minimum change set, ranked risks, first experiment, phases and milestones |
+| [docs/05-e0-boot-probe.md](docs/05-e0-boot-probe.md) | first runtime experiment: injection, network guard, boot |
 | [PROGRESS.md](PROGRESS.md) | progress log, open issues, next action |
 | [status/STATUS.md](status/STATUS.md) | table view of the status image |
 
@@ -23,6 +24,8 @@ client does today. Local, offline use only.
 | `tools/census_summary.py <census.json>` | splits the census by product and subsystem |
 | `tools/strings_diff.py <a.exe> <b.exe> <outdir> a b` | string and RTTI diff by family (net messages, convars, launch params, natives) |
 | `tools/pe_info.py <exe>...` | PE header facts and section entropy (packed or not) |
+| `tools/add_import.py <in.exe> <out.exe> <dll> <func>` | adds an import to a PE copy through a `.l2` section (never in place) |
+| `probe/build.bat` | builds the E0 boot probe (`probe.dll`) |
 | `tools/make_status.py <census.json>` | regenerates `status/status.svg` and `status/STATUS.md` from the census, `verified.json` and `milestones.json` |
 
 Regenerate the status after a census run:

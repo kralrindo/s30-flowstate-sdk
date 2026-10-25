@@ -822,16 +822,16 @@
 <rect x="658.5" y="491.2" width="90.2" height="62.3" fill="#5b616b"><title>B5 Connect/signon trace: S30 connectionless packets and signon sequence documented</title></rect>
 <text x="662.5" y="506.2" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">B5</text>
 <text x="662.5" y="521.2" fill="#ffffff" font-size="11">Connect/signo…</text>
-<rect x="750.8" y="491.2" width="90.2" height="62.3" fill="#5b616b"><title>B6 Integrity checks: S30 code-integrity / import checks found or ruled out</title></rect>
-<text x="754.8" y="506.2" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">B6</text>
+<rect x="750.8" y="491.2" width="90.2" height="62.3" fill="#b8860b"><title>B6 Integrity checks: S30 code-integrity / import checks found or ruled out</title></rect>
+<text x="754.8" y="506.2" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">B6</text>
 <text x="754.8" y="521.2" fill="#ffffff" font-size="11">Integrity che…</text>
 <rect x="845.0" y="197.5" width="240.8" height="20" fill="#2b3038"/>
 <text x="849.0" y="213.5" fill="#ffffff" font-size="13" stroke="#1e2127" stroke-width="3" paint-order="stroke">C SDK</text>
-<rect x="846.0" y="218.5" width="78.2" height="69.6" fill="#5b616b"><title>C1 Loader injects: patched S30 exe copy loads loader.dll -&gt; client_s30.dll, log line at boot</title></rect>
-<text x="850.0" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">C1</text>
+<rect x="846.0" y="218.5" width="78.2" height="69.6" fill="#b8860b"><title>C1 Loader injects: patched S30 exe copy loads loader.dll -&gt; client_s30.dll, log line at boot</title></rect>
+<text x="850.0" y="233.5" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">C1</text>
 <text x="850.0" y="248.5" fill="#ffffff" font-size="11">Loader inje…</text>
-<rect x="926.2" y="218.5" width="78.2" height="69.6" fill="#5b616b"><title>C2 Offline + net guard: no non-loopback connection during boot (guard log + netstat)</title></rect>
-<text x="930.2" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">C2</text>
+<rect x="926.2" y="218.5" width="78.2" height="69.6" fill="#b8860b"><title>C2 Offline + net guard: no non-loopback connection during boot (guard log + netstat)</title></rect>
+<text x="930.2" y="233.5" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">C2</text>
 <text x="930.2" y="248.5" fill="#ffffff" font-size="11">Offline + n…</text>
 <rect x="1006.5" y="218.5" width="78.2" height="69.6" fill="#5b616b"><title>C3 Core detours: tier0/tier1/convar/cmd/filesystem resolve and attach on S30</title></rect>
 <text x="1010.5" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">C3</text>
@@ -913,5 +913,5 @@
 <text x="774" y="584" fill="#a8adb5" font-size="13">in progress</text>
 <rect x="858" y="574" width="12" height="12" fill="#5b616b"/>
 <text x="875" y="584" fill="#a8adb5" font-size="13">not started</text>
-<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-25 19:25 UTC</text>
+<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-25 19:41 UTC</text>
 </svg>
