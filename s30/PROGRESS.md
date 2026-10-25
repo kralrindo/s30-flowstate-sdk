@@ -20,7 +20,7 @@
 - S30 runs the added import with no self-check in 400 s. The guard refused 10 outbound DNS lookups (stryder stats,
   fastpatch rules, EA telemetry); no connections were attempted.
 - Boot reaches the window, D3D12 and EOS init, then idles, most likely waiting on EA/EOS sign-in.
-- IDA licence fixed by the user; S30 IDB built (`analysis\idb5apex_dx12_s30.exe.i64`).
+- IDA licence fixed by the user; S30 IDB built (`analysis\idb\r5apex_dx12_s30.exe.i64`).
 
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
