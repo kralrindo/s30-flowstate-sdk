@@ -42,16 +42,26 @@
   the hooked one, but retail UI scripts call printl 0 times at the title screen.
 - Retail strips command bodies (echo = return 0): useful commands must come from the SDK.
 
+### 2026-10-26: ImGui overlay + engine ConCommands (docs/08)
+- DX12 ImGui overlay in client_s30 (Present/Present1/ResizeBuffers(1)/ExecuteCommandLists hooks, render on the game
+  queue): SDK Console, Status and Connect panels, ` / F10 toggle, input routed through a WndProc subclass, scaled for
+  1440p. Verified by in-process back-buffer screenshots and posted key input.
+- S30 ConCommand/ICvar ABI verified (ConCommandBase lost m_bRegistered at +0x10, now bit 0 of +0x2C; ICvar slot 9
+  RegisterConCommand). SDK commands are real engine commands; proven by an engine-dispatched `sdk_status`.
+- Test tooling: command drop file, post_keys.ps1, sdk_screenshot, -s30_overlay.
+
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
 - E0 boot probe.
 - C1 loader → client_s30, C2 offline + network guard.
 - SDK console with engine log capture and command input (part of C3).
+- C4: SDK working on the main menu -- ImGui overlay console/status/connect, engine-registered SDK commands.
 
 ## Open issues
 - Not yet known whether S30 checks its own image or import table (B6).
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
 ## Next action
-Check the S30 ConVar/ConCommand ABI against S21 (ICommandLine already lost a vtable slot), then register the first
-SDK ConCommands in client_s30 so the console has working commands; after that, script loading (B3/C5).
+Server connection (phase D): start the S3 dedi from a workspace copy, trace what the S30 client sends on `connect`
+and what the dedi answers, map S30's net message table (B1), then port the bridge's connect handshake. In parallel,
+the S30 -> S3 server asset pipeline (phase E).

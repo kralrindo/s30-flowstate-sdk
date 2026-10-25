@@ -15,6 +15,7 @@ client does today. Local, offline use only.
 | [docs/05-e0-boot-probe.md](docs/05-e0-boot-probe.md) | first runtime experiment: injection, network guard, boot |
 | [docs/06-loader-client-s30.md](docs/06-loader-client-s30.md) | loader.dll on S30, the client_s30 product, offline platform patches |
 | [docs/07-console-and-logging.md](docs/07-console-and-logging.md) | engine print path, script print callbacks, SDK console |
+| [docs/08-imgui-overlay-and-concommands.md](docs/08-imgui-overlay-and-concommands.md) | ImGui overlay (DX12), S30 ConCommand/ICvar ABI, SDK commands |
 | [PROGRESS.md](PROGRESS.md) | progress log, open issues, next action |
 | [status/STATUS.md](status/STATUS.md) | table view of the status image |
 
@@ -29,6 +30,7 @@ client does today. Local, offline use only.
 | `tools/add_import.py <in.exe> <out.exe> <dll> <func>` | adds an import to a PE copy through a `.l2` section (never in place) |
 | `tools/deploy_s30_client.ps1` | builds `build\s30_client` (hardlinked depot, patched exe, loader.dll + client_s30.dll) |
 | `tools/ida_query.py <i64> <cmd>` | headless IDA: strxref / decomp / disasm / callers |
+| `tools/post_keys.ps1` | posts keys/text to the test client window (overlay input tests) |
 | `probe/build.bat` | builds the E0 boot probe (`probe.dll`) |
 | `tools/make_status.py <census.json>` | regenerates `status/status.svg` and `status/STATUS.md` from the census, `verified.json` and `milestones.json` |
 

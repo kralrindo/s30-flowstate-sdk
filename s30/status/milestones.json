@@ -94,13 +94,14 @@
 					"name": "Core detours",
 					"state": "wip",
 					"test": "tier0/tier1/convar/cmd/filesystem resolve and attach on S30",
-					"note": "engine log (CoreMsgV/LogDirect), Cbuf_AddText, script print callbacks verified on S30 (docs/07); convar/filesystem not yet"
+					"note": "engine log, Cbuf, script print, ICvar + ConCommand registration verified on S30 (docs/07, docs/08); filesystem/pak hooks not yet"
 				},
 				{
 					"id": "C4",
 					"name": "Main menu",
-					"state": "todo",
-					"test": "client reaches the main menu with SDK console"
+					"state": "done",
+					"test": "client reaches the main menu with SDK console",
+					"note": "S30 title/main menu: ImGui SDK overlay (console/status/connect), engine-registered SDK commands, offline + guarded (docs/08)"
 				},
 				{
 					"id": "C5",
