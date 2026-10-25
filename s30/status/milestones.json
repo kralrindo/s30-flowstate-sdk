@@ -1,0 +1,67 @@
+{
+	"_doc": "Integration milestones. state: done | wip | todo. A milestone is done only when its test passes; 'test' says what that is.",
+	"phases": [
+		{
+			"name": "A Recon",
+			"items": [
+				{ "id": "A1", "name": "Build inventory", "state": "done", "test": "s30/docs/01-inventory.md lists every binary, pak family and tool with versions" },
+				{ "id": "A2", "name": "Dependency map", "state": "done", "test": "s30/docs/02-architecture.md: injection, bridge, dedi, assets" },
+				{ "id": "A3", "name": "Signature census", "state": "done", "test": "pattern_census.py run on S21 DX11/DX12, S3 dedi, S30" },
+				{ "id": "A4", "name": "String/param diff", "state": "done", "test": "strings_diff.py: netmsg, convar, launch-param, script-native families" }
+			]
+		},
+		{
+			"name": "B Compat",
+			"items": [
+				{ "id": "B1", "name": "S30 netmsg ID map", "state": "todo", "test": "every S21 msgArray slot matched to an S30 slot (GetType + RFB body)" },
+				{ "id": "B2", "name": "Recv table diff", "state": "todo", "test": "S30 client class/recvprop dump diffed against S21" },
+				{ "id": "B3", "name": "Script native diff", "state": "todo", "test": "S30 native registration table dumped; Flowstate client/UI calls checked" },
+				{ "id": "B4", "name": "Asset version census", "state": "todo", "test": "per-type asset versions of S30 paks vs what the S3 dedi parses" },
+				{ "id": "B5", "name": "Connect/signon trace", "state": "todo", "test": "S30 connectionless packets and signon sequence documented" },
+				{ "id": "B6", "name": "Integrity checks", "state": "todo", "test": "S30 code-integrity / import checks found or ruled out" }
+			]
+		},
+		{
+			"name": "C SDK",
+			"items": [
+				{ "id": "C1", "name": "Loader injects", "state": "todo", "test": "patched S30 exe copy loads loader.dll -> client_s30.dll, log line at boot" },
+				{ "id": "C2", "name": "Offline + net guard", "state": "todo", "test": "no non-loopback connection during boot (guard log + netstat)" },
+				{ "id": "C3", "name": "Core detours", "state": "todo", "test": "tier0/tier1/convar/cmd/filesystem resolve and attach on S30" },
+				{ "id": "C4", "name": "Main menu", "state": "todo", "test": "client reaches the main menu with SDK console" },
+				{ "id": "C5", "name": "Script VM hooks", "state": "todo", "test": "client/UI VMs compile Flowstate scripts without errors" },
+				{ "id": "C6", "name": "Bridge symbols", "state": "todo", "test": "every NetObs symbol resolves and is verified on S30" }
+			]
+		},
+		{
+			"name": "D Connect",
+			"items": [
+				{ "id": "D1", "name": "Challenge/connect", "state": "todo", "test": "dedi logs the S30 client as connected" },
+				{ "id": "D2", "name": "Signon complete", "state": "todo", "test": "client reaches SIGNONSTATE_FULL" },
+				{ "id": "D3", "name": "First snapshot", "state": "todo", "test": "client decodes snapshots without desync" },
+				{ "id": "D4", "name": "Entities replicate", "state": "todo", "test": "player, weapons, props created and moving" },
+				{ "id": "D5", "name": "Script remotes", "state": "todo", "test": "S2C/C2S ScriptRemote calls run on both ends" },
+				{ "id": "D6", "name": "10-min session", "state": "todo", "test": "10 minutes in game, no kick, no crash" },
+				{ "id": "D7", "name": "Disconnect/rejoin", "state": "todo", "test": "disconnect and reconnect cleanly" }
+			]
+		},
+		{
+			"name": "E Assets",
+			"items": [
+				{ "id": "E1", "name": "Server closure", "state": "todo", "test": "list of S30 assets the dedi must load for the target content" },
+				{ "id": "E2", "name": "Models -> dedi", "state": "todo", "test": "converted mdl load on the dedi (sample, then batch)" },
+				{ "id": "E3", "name": "Anims -> dedi", "state": "todo", "test": "arig/aseq convert with R5-AnimConv -i 30 -o 3, clips play" },
+				{ "id": "E4", "name": "BSP -> dedi", "state": "todo", "test": "bspconv -dedi output loads, collision matches" },
+				{ "id": "E5", "name": "Dedi paks + VPK", "state": "todo", "test": "RePak/revpk outputs load with zero missing-asset errors" }
+			]
+		},
+		{
+			"name": "F Integration",
+			"items": [
+				{ "id": "F1", "name": "Launch scripts", "state": "todo", "test": "one command starts dedi + S30 client from the workspace" },
+				{ "id": "F2", "name": "S21 regression", "state": "todo", "test": "S21 client + dedi still work with the unchanged install" },
+				{ "id": "F3", "name": "Soak test", "state": "todo", "test": "60-minute session, logs clean" },
+				{ "id": "F4", "name": "Test report", "state": "todo", "test": "tests/ results with logs" }
+			]
+		}
+	]
+}

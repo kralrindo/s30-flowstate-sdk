@@ -1,3 +1,12 @@
+# S30 Flowstate SDK
+
+Port of the Flowstate SDK to the Apex Legends S30.1 client (`R5pc_r5-301_J28_CL11570498`), so it connects to the
+Season 3 dedicated server like the S21 client does. Work in progress; local use only. Port docs, tools and status: [s30/](s30/README.md).
+
+![status](s30/status/status.svg)
+
+---
+
 # Source SDK
 * This repository houses the source code for the development package targeting the game **Apex Legends**.
 
