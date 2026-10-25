@@ -1,0 +1,508 @@
+diff --git a/src/core/main.cpp b/src/core/main.cpp
+index 08f376d..e36c9a2 100644
+--- a/src/core/main.cpp
++++ b/src/core/main.cpp
+@@ -95,6 +95,7 @@ static void HandleAssetRegistration(const CCommandLine* const cli)
+     // mt4a
+     extern void InitTextureAssetType();
+     extern void InitTextureAnimationAssetType();
++    extern void InitTextureExtraAssetType();
+     extern void InitTextureListAssetType();
+     extern void InitUIImageAtlasAssetType();
+     extern void InitUIImageAssetType(); 
+@@ -163,6 +164,7 @@ static void HandleAssetRegistration(const CCommandLine* const cli)
+     // mt4a
+     InitTextureAssetType();
+     InitTextureAnimationAssetType();
++    InitTextureExtraAssetType();
+     InitTextureListAssetType();
+     InitUIImageAtlasAssetType();
+     InitUIImageAssetType();
+diff --git a/src/core/utils/exportsettings.cpp b/src/core/utils/exportsettings.cpp
+index c37f9cd..9d07238 100644
+--- a/src/core/utils/exportsettings.cpp
++++ b/src/core/utils/exportsettings.cpp
+@@ -39,6 +39,7 @@ void ExportSettings_t::SetFromCLI(const CCommandLine* cli)
+ 		this->qcMinorVersion = static_cast<uint16_t>(atoi(qcMinorStr));
+ 
+ 	this->exportRigSequences = cli->HasParam("-exportrigsequences");
++	this->skipAnimParse = cli->HasParam("-noanimparse");
+ 	this->exportModelSkin = false; // todo: maybe make an option to replace this for exporting all skins, since skins cant be picked on CLI
+ 	this->exportModelMatsTruncated = cli->HasParam("-truncatemodelmats");
+ 	this->exportQCIFiles = cli->HasParam("-useqci");
+diff --git a/src/core/utils/exportsettings.h b/src/core/utils/exportsettings.h
+index a770844..2bad36a 100644
+--- a/src/core/utils/exportsettings.h
++++ b/src/core/utils/exportsettings.h
+@@ -36,6 +36,10 @@ struct ExportSettings_t
+     // the substitution is only needed when the target device is DX11
+     bool shaderKeepSM51;
+ 
++    // raw-export runs: skip the post-load animation decode (aseq frames), which raw
++    // .rseq/.asqd output does not use and which faults on some S30 sequences
++    bool skipAnimParse;
++
+     // model physics settings
+     uint32_t exportPhysicsContentsFilter;
+     bool exportPhysicsFilterExclusive;
+diff --git a/src/game/rtech/assets/animseq.cpp b/src/game/rtech/assets/animseq.cpp
+index 2f04c97..26029ca 100644
+--- a/src/game/rtech/assets/animseq.cpp
++++ b/src/game/rtech/assets/animseq.cpp
+@@ -75,7 +75,7 @@ void PostLoadAnimSeqAsset(CAssetContainer* const container, CAsset* const asset)
+ 
+ 	CPakAsset* pakAsset = static_cast<CPakAsset*>(asset);
+ 
+-	if (!pakAsset->hasExtraData())
++	if (!pakAsset->hasExtraData() || g_ExportSettings.skipAnimParse)
+ 		return;
+ 
+ #ifndef DEBUG_NO_ASEQ_POSTLOAD
+diff --git a/src/game/rtech/assets/animseq_data.cpp b/src/game/rtech/assets/animseq_data.cpp
+index 81325a9..99ff1b7 100644
+--- a/src/game/rtech/assets/animseq_data.cpp
++++ b/src/game/rtech/assets/animseq_data.cpp
+@@ -40,7 +40,12 @@ bool ExportAnimSeqDataAsset(CAsset* const asset, const int setting)
+ 
+ 	const AnimSeqDataAsset* const animSeqDataAsset = pakAsset->extraData<const AnimSeqDataAsset* const>();
+ 
+-	if (animSeqDataAsset->dataSize == 0)
++	// The blob's extent in its page is authoritative: the bone walk in ParseAnimSeqDataForSeq
++	// truncates S30 clips, and never runs for clips whose owner (a v20 model) is not parsed.
++	const size_t regionSize = Pak_RegionSizeAt(pakAsset, animSeqDataAsset->data);
++	const size_t dataSize = regionSize ? regionSize : animSeqDataAsset->dataSize;
++
++	if (dataSize == 0)
+ 	{
+ 		Log("ASQD: Asset had size of 0. Skipping export\n", pakAsset->GetAssetGUID());
+ 		return true;
+@@ -66,7 +71,7 @@ bool ExportAnimSeqDataAsset(CAsset* const asset, const int setting)
+ 	exportPath.append(std::format("{}.asqd", animStem));
+ 
+ 	StreamIO out(exportPath, eStreamIOMode::Write);
+-	out.write(animSeqDataAsset->data, animSeqDataAsset->dataSize);
++	out.write(animSeqDataAsset->data, dataSize);
+ 
+ 	return true;
+ }
+diff --git a/src/game/rtech/assets/effect.cpp b/src/game/rtech/assets/effect.cpp
+index ac3ef84..4cca534 100644
+--- a/src/game/rtech/assets/effect.cpp
++++ b/src/game/rtech/assets/effect.cpp
+@@ -46,7 +46,8 @@ static size_t OperatorListOffset(const EfctLayout layout, const int version)
+         if (version == 16) return 0x160; // v16
+         if (version == 31) return 0x188; // v31
+         return 0;                        // other baked versions: parms size unknown
+-    case EfctLayout::V5_24B:    return 0x1A0;
++    case EfctLayout::V5_24B:    return 0;     // 0x1A0 is not it: S7's effects.rpak crashed the walk
++                                              // (list 4 held a non-pointer); decoded offline instead
+     case EfctLayout::V2_16B:    return 0x140;
+     default:                    return 0; // V7 / Unknown: not decoded
+     }
+@@ -438,8 +439,11 @@ static bool ExportEffectAsset(CAsset* const asset, const int setting)
+     // 3) ParticleDefinition (name + operators), version-dispatched
+     ExportEffectParticleDef(pakAsset, outBase, d->guid, d->version, hdrSize);
+ 
+-    // 4) the definition blob itself, re-packable (v16 24-byte header family)
+-    if (d->version == 16 && hdrSize == 24)
++    // 4) the definition blob itself, re-packable (v16 24-byte header family). v14 (S17)
++    // shares the container: its blob is exported raw too, for the v14 -> v16 converter;
++    // so do v21 (S22) and v23 (S23), for the v21 / v23 -> v16 converters, and v5 (S7), for
++    // the v5 -> v16 one.
++    if ((d->version == 16 || d->version == 14 || d->version == 21 || d->version == 23 || d->version == 5) && hdrSize == 24)
+         ExportEffectRawDef(pakAsset, outBase);
+ 
+     return true;
+diff --git a/src/game/rtech/assets/material.cpp b/src/game/rtech/assets/material.cpp
+index f05671a..6e26125 100644
+--- a/src/game/rtech/assets/material.cpp
++++ b/src/game/rtech/assets/material.cpp
+@@ -1113,7 +1113,8 @@ bool ExportMaterialStruct(const MaterialAsset* const materialAsset,
+ 
+             const TextureAsset* const textureAsset = info.pTexture->extraData<const TextureAsset* const>();
+ 
+-            if (textureAsset->type != eTextureType::_UNUSED)
++            // [r5ed]: types missing from the map (e.g. the tropics ocean water textures) print as "unavailable" instead of throwing out_of_range.
++            if (textureAsset->type != eTextureType::_UNUSED && s_TextureTypeMap.count(textureAsset->type))
+                 toPrint = s_TextureTypeMap.at(textureAsset->type);
+         }
+ 
+diff --git a/src/game/rtech/assets/material.h b/src/game/rtech/assets/material.h
+index bfc61c1..263159b 100644
+--- a/src/game/rtech/assets/material.h
++++ b/src/game/rtech/assets/material.h
+@@ -714,10 +714,12 @@ public:
+ 		depthShadowMaterial(hdr->depthShadowMaterial), depthPrepassMaterial(hdr->depthPrepassMaterial), depthVSMMaterial(hdr->depthVSMMaterial), depthShadowTightMaterial(hdr->depthShadowTightMaterial), colpassMaterial(hdr->colpassMaterial), shaderSet(hdr->shaderSet),
+ 		numAnimationFrames(hdr->numAnimationFrames), textureAnimation(hdr->textureAnimation), textureHandles(hdr->textureHandles), streamingTextureHandles(hdr->streamingTextureHandles),
+ 		width(hdr->width), height(hdr->height), depth(hdr->depth), unk(hdr->unk_80), glueFlags(hdr->glueFlags), glueFlags2(hdr->glueFlags2), materialType(hdr->materialType), uberBufferFlags(hdr->uberBufferFlags), shaderSetAsset(nullptr), snapshotAsset(nullptr),
+-		cpuData(cpu->data), cpuDataSize(cpu->dataSize)
++		cpuData(cpu->data), cpuDataSize(cpu->dataSize), unk_CC(hdr->unk_CC), unk_E8(hdr->unk_E8), unk_EA(hdr->unk_EA),
++		unk_84v(hdr->unk_84)
+ 	{
+ 		memcpy_s(samplers, sizeof(samplers), hdr->samplers, sizeof(hdr->samplers));
+ 		memcpy_s(dxStates, sizeof(dxStates), &hdr->dxStates, sizeof(hdr->dxStates));
++		memcpy_s(unk_C0, sizeof(unk_C0), hdr->unk_C0, sizeof(hdr->unk_C0)); // same header tail as v22, was left at 0
+ 
+ 		numRenderTargets = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
+ 	};
+diff --git a/src/game/rtech/assets/model.cpp b/src/game/rtech/assets/model.cpp
+index e616283..4db74d5 100644
+--- a/src/game/rtech/assets/model.cpp
++++ b/src/game/rtech/assets/model.cpp
+@@ -1016,6 +1016,19 @@ static void ParseModelTextureData_v16(ModelParsedData_t* const parsedData)
+         parsedData->skins.emplace_back(pStudioHdr->pSkinName(i), pStudioHdr->pSkinFamily(i));
+ }
+ 
++// mdl_ v20 (S30): the asset header keeps the v16 layout, but the studiohdr is a
++// revision RSX cannot parse. These models are kept for raw (.rmdl) export only,
++// the input of rmdlconv -v19s30.
++struct ModelRawV20_t
++{
++    const ModelAssetHeader_v16_t* hdr;
++    const ModelAssetCPU_v16_t* cpu;
++    AssetPtr_t streamEntry;
++};
++
++static std::mutex s_rawModelsV20Mutex;
++static std::unordered_map<uint64_t, ModelRawV20_t> s_rawModelsV20;
++
+ void LoadModelAsset(CAssetContainer* const pak, CAsset* const asset)
+ {
+     UNUSED(pak);
+@@ -1026,6 +1039,19 @@ void LoadModelAsset(CAssetContainer* const pak, CAsset* const asset)
+     const AssetPtr_t streamEntry = pakAsset->getStarPakStreamEntry(false); // vertex data is never opt streamed (I hope)
+ 
+     const eMDLVersion ver = GetModelVersionFromAsset(pakAsset, static_cast<CPakFile* const>(pak));
++    if (ver == eMDLVersion::VERSION_UNK && pakAsset->version() == 20)
++    {
++        const ModelAssetHeader_v16_t* const hdr = reinterpret_cast<ModelAssetHeader_v16_t*>(pakAsset->header());
++        const ModelAssetCPU_v16_t* const cpu = reinterpret_cast<ModelAssetCPU_v16_t*>(pakAsset->cpu());
++
++        if (hdr->name)
++            pakAsset->SetAssetName(hdr->name, true);
++
++        std::lock_guard<std::mutex> lock(s_rawModelsV20Mutex);
++        s_rawModelsV20[pakAsset->GetAssetGUID()] = { hdr, cpu, streamEntry };
++        return;
++    }
++
+     switch (ver)
+     {
+     case eMDLVersion::VERSION_8:
+@@ -1667,6 +1693,72 @@ static bool ExportPhysicsModelBVH(const ModelAsset* const modelAsset, std::files
+     return true;
+ }
+ 
++// Raw v20 export: the pak blobs as stored. The .vg is the starpak entry as is
++// (groups still compressed; rmdlconv decompresses), the .vg_static the resident copy.
++static bool ExportRawModelAssetV20(CPakAsset* const pakAsset, const ModelRawV20_t& raw)
++{
++    const ModelAssetHeader_v16_t* const hdr = raw.hdr;
++    const ModelAssetCPU_v16_t* const cpu = raw.cpu;
++
++    if (!hdr->name || !hdr->data || !cpu || cpu->dataSizeModel <= 0)
++    {
++        printf("WARNING: model v20 0x%llX has no studiohdr data; skipped.\n", (unsigned long long)pakAsset->GetAssetGUID());
++        return false;
++    }
++
++    std::filesystem::path exportPath = g_ExportSettings.GetExportDirectory();
++    const std::filesystem::path modelPath(hdr->name);
++
++    if (g_ExportSettings.exportPathsFull)
++        exportPath.append(modelPath.parent_path().string());
++    else
++        exportPath.append(std::format("{}/{}", s_AssetTypePaths.find(AssetType_t::MDL_)->second, modelPath.stem().string()));
++
++    if (!CreateDirectories(exportPath))
++        return false;
++
++    exportPath.append(std::format("{}.rmdl", modelPath.stem().string()));
++
++    StreamIO studioOut(exportPath.string(), eStreamIOMode::Write);
++    studioOut.write(reinterpret_cast<const char*>(hdr->data), cpu->dataSizeModel);
++    studioOut.close();
++
++    if (cpu->physics && cpu->dataSizePhys > 0)
++    {
++        exportPath.replace_extension(".phy");
++        StreamIO physOut(exportPath.string(), eStreamIOMode::Write);
++        physOut.write(reinterpret_cast<const char*>(cpu->physics), cpu->dataSizePhys);
++    }
++
++    exportPath.replace_extension(".rson");
++    StreamIO depOut(exportPath.string(), eStreamIOMode::Write);
++    WriteRSONDependencyArray(*depOut.W(), "rigs", hdr->animRigs, hdr->numAnimRigs);
++    WriteRSONDependencyArray(*depOut.W(), "seqs", hdr->animSeqs, hdr->numAnimSeqs);
++    depOut.close();
++
++    if (hdr->staticStreamingData && hdr->streamingDataSize)
++    {
++        exportPath.replace_extension(".vg_static");
++        StreamIO staticOut(exportPath.string(), eStreamIOMode::Write);
++        staticOut.write(hdr->staticStreamingData, hdr->streamingDataSize);
++    }
++
++    if (raw.streamEntry.size)
++    {
++        const std::unique_ptr<char[]> streamedData = pakAsset->getStarPakData(raw.streamEntry.offset, raw.streamEntry.size, false);
++        if (streamedData)
++        {
++            exportPath.replace_extension(".vg");
++            StreamIO vgOut(exportPath.string(), eStreamIOMode::Write);
++            vgOut.write(streamedData.get(), raw.streamEntry.size);
++        }
++        else
++            printf("WARNING: model v20 '%s' streamed vertex data not found (starpak missing?).\n", hdr->name);
++    }
++
++    return true;
++}
++
+ static const char* const s_PathPrefixMDL = s_AssetTypePaths.find(AssetType_t::MDL_)->second;
+ bool ExportModelAsset(CAsset* const asset, const int setting)
+ {
+@@ -1677,6 +1769,17 @@ bool ExportModelAsset(CAsset* const asset, const int setting)
+ 
+     if (!modelAsset)
+     {
++        {
++            std::unique_lock<std::mutex> lock(s_rawModelsV20Mutex);
++            const auto it = s_rawModelsV20.find(pakAsset->GetAssetGUID());
++            if (it != s_rawModelsV20.end())
++            {
++                const ModelRawV20_t raw = it->second;
++                lock.unlock();
++                return ExportRawModelAssetV20(pakAsset, raw);
++            }
++        }
++
+         // Load skipped parsing (e.g. unsupported newer studiohdr); the LIST
+         // row exists but there is nothing to export.
+         printf("WARNING: skipping export of model 0x%llX '%s' (no parsed data).\n",
+diff --git a/src/game/rtech/assets/settings.cpp b/src/game/rtech/assets/settings.cpp
+index b52a01e..099ee2d 100644
+--- a/src/game/rtech/assets/settings.cpp
++++ b/src/game/rtech/assets/settings.cpp
+@@ -391,7 +391,31 @@ void SettingsAsset::R_WriteModValues(std::string& out, const SettingsLayoutAsset
+ 			modValue->nameIndex, g_settingsModType[modValue->type]);
+ 
+ 		SettingsLayoutFindByOffsetResult_s searchResult;
+-		const bool foundField = SettingsFieldFinder_FindFieldByAbsoluteOffset(layout, modValue->valueOffset, searchResult);
++		bool foundField = SettingsFieldFinder_FindFieldByAbsoluteOffset(layout, modValue->valueOffset, searchResult);
++
++		// A scalar mod can target one component of a float2/float3 field (S30 player settings
++		// modify poseSettings[n].hull_max per axis: three mods, at +0, +4 and +8). Name the
++		// component, "<field>.x/.y/.z", so the mod stays a single float.
++		const char* component = nullptr;
++		const bool exactIsVector = foundField && (searchResult.field->dataType == eSettingsFieldType::ST_FLOAT3
++			|| searchResult.field->dataType == eSettingsFieldType::ST_FLOAT2);
++		if ((!foundField || exactIsVector) && modValue->type != SettingsModType_e::kBool && modValue->type != SettingsModType_e::kString)
++		{
++			static const char* const s_components[3] = { ".x", ".y", ".z" };
++			for (uint32_t c = 0; c < 3 && !component; c++)
++			{
++				SettingsLayoutFindByOffsetResult_s vecResult;
++				if (modValue->valueOffset < c * 4 || !SettingsFieldFinder_FindFieldByAbsoluteOffset(layout, modValue->valueOffset - c * 4, vecResult))
++					continue;
++				const eSettingsFieldType t = vecResult.field->dataType;
++				if (t == eSettingsFieldType::ST_FLOAT3 || (t == eSettingsFieldType::ST_FLOAT2 && c < 2))
++				{
++					searchResult = vecResult;
++					component = s_components[c];
++					foundField = true;
++				}
++			}
++		}
+ 
+ 		if (foundField)
+ 		{
+@@ -421,7 +445,7 @@ void SettingsAsset::R_WriteModValues(std::string& out, const SettingsLayoutAsset
+ 				break;
+ 			}
+ 
+-			out += std::format("\t\t\t\"field\": \"{:s}\"\n", searchResult.fieldAccessPath);
++			out += std::format("\t\t\t\"field\": \"{:s}{:s}\"\n", searchResult.fieldAccessPath, component ? component : "");
+ 		}
+ 		else
+ 		{
+diff --git a/src/game/rtech/assets/settings_layout.cpp b/src/game/rtech/assets/settings_layout.cpp
+index 6b0a94e..fa5cf5d 100644
+--- a/src/game/rtech/assets/settings_layout.cpp
++++ b/src/game/rtech/assets/settings_layout.cpp
+@@ -314,8 +314,15 @@ static bool ExportSettingsLayoutInternal(const SettingsLayoutAsset* const hdr, c
+ 
+ 			const SettingsLayoutAsset* const sub = &hdr->subHeaders[field.valueSubLayoutIdx];
+ 
+-			if (!ExportSettingsLayoutInternal(sub, subPath.c_str(), relativePathIndex, &subLayouts))
++			// "subLayouts" is indexed by layoutIndex, which need not follow field order
++			// (S30 settings_player_layout: damageMilestones is #0 but comes after #1-#4).
++			std::vector<std::string> subPathOut;
++			if (!ExportSettingsLayoutInternal(sub, subPath.c_str(), relativePathIndex, &subPathOut))
+ 				return false;
++
++			if (subLayouts.size() <= field.valueSubLayoutIdx)
++				subLayouts.resize(static_cast<size_t>(field.valueSubLayoutIdx) + 1);
++			subLayouts[field.valueSubLayoutIdx] = subPathOut.front();
+ 		}
+ 	}
+ 
+diff --git a/src/game/rtech/assets/texture_extra.cpp b/src/game/rtech/assets/texture_extra.cpp
+new file mode 100644
+index 0000000..67baadf
+--- /dev/null
++++ b/src/game/rtech/assets/texture_extra.cpp
+@@ -0,0 +1,102 @@
++#include "pch.h"
++
++#include <game/rtech/cpakfile.h>
++#include <game/rtech/utils/utils.h>
++
++extern ExportSettings_t g_ExportSettings;
++
++// Re-packable .txtx container read by RePak's AddTextureExtraAsset_v2:
++//   u32 magic 'TXTX', u32 format, u32 count, u32 dataLen, u8 data[dataLen].
++#define TXTX_FILE_MAGIC 0x54585854u
++
++// txtx v2 header: two u32 fields, then a pointer to the data blob.
++struct TextureExtraAssetHeader_v2_t
++{
++    uint32_t format;
++    uint32_t count;
++    const char* data;
++};
++
++// The blob length is not stored. Per-cubemap ambient data (format 1, see BSP lump
++// CUBEMAPS_AMBIENT_RCP) is a float4 per entry; the RGBA8 table (format 0x100000) is
++// 64 bytes per entry. Any other format is refused rather than guessed.
++static size_t GetTextureExtraDataSize(const TextureExtraAssetHeader_v2_t* const hdr)
++{
++    switch (hdr->format)
++    {
++    case 0x1:
++        return static_cast<size_t>(hdr->count) * 16;
++    case 0x100000:
++        return static_cast<size_t>(hdr->count) * 64;
++    default:
++        return 0;
++    }
++}
++
++void LoadTextureExtraAsset(CAssetContainer* const container, CAsset* const asset)
++{
++    UNUSED(container);
++
++    CPakAsset* pakAsset = static_cast<CPakAsset*>(asset);
++
++    // [rika]: has no name var
++    pakAsset->SetAssetNameFromCache();
++}
++
++bool ExportTextureExtraAsset(CAsset* const asset, const int setting)
++{
++    UNUSED(setting);
++
++    CPakAsset* pakAsset = static_cast<CPakAsset*>(asset);
++    const TextureExtraAssetHeader_v2_t* const hdr = reinterpret_cast<const TextureExtraAssetHeader_v2_t*>(pakAsset->header());
++
++    const size_t dataSize = GetTextureExtraDataSize(hdr);
++    if (dataSize == 0 || !hdr->data)
++    {
++        printf("[TXTX] asset 0x%llX has unknown format 0x%X (count %u); not exported\n", asset->GetAssetGUID(), hdr->format, hdr->count);
++        return false;
++    }
++
++    std::filesystem::path exportPath = g_ExportSettings.GetExportDirectory();
++    const std::filesystem::path txtxPath(asset->GetAssetName());
++
++    if (g_ExportSettings.exportPathsFull)
++        exportPath.append(txtxPath.parent_path().string());
++    else
++        exportPath.append("txtx");
++
++    if (!CreateDirectories(exportPath))
++    {
++        assertm(false, "Failed to create asset type directory.");
++        return false;
++    }
++
++    exportPath.append(txtxPath.filename().string());
++    exportPath.replace_extension("txtx");
++
++    StreamIO txtxOut(exportPath.string(), eStreamIOMode::Write);
++
++    const uint32_t fileHdr[4] = { TXTX_FILE_MAGIC, hdr->format, hdr->count, static_cast<uint32_t>(dataSize) };
++    txtxOut.write(reinterpret_cast<const char*>(fileHdr), sizeof(fileHdr));
++    txtxOut.write(hdr->data, dataSize);
++
++    txtxOut.close();
++
++    return true;
++}
++
++void InitTextureExtraAssetType()
++{
++    AssetTypeBinding_t type =
++    {
++        .name = "Texture Extra",
++        .type = 'xtxt',
++        .headerAlignment = 8,
++        .loadFunc = LoadTextureExtraAsset,
++        .postLoadFunc = nullptr,
++        .previewFunc = nullptr,
++        .e = { ExportTextureExtraAsset, 0, nullptr, 0ull },
++    };
++
++    REGISTER_TYPE(type);
++}
+diff --git a/src/game/rtech/assets/ui_image.cpp b/src/game/rtech/assets/ui_image.cpp
+index 807b347..a812ef0 100644
+--- a/src/game/rtech/assets/ui_image.cpp
++++ b/src/game/rtech/assets/ui_image.cpp
+@@ -836,15 +836,24 @@ static bool ExportRawUIImageAsset(CPakAsset* const asset, std::filesystem::path&
+             PagePtr_t pp{};
+             int tgtPageIdx = -1;
+             uint32_t tgtOff = 0;
+-            if (resolvedPtr && ResolveToPagePtr(resolvedPtr, tgtPageIdx, tgtOff))
++            // Repak re-creates each pointer as an offset into this blob (AddPointer(rawLump, off,
++            // rawLump, target)), so store the target relative to the blob start, not to its page.
++            // A page-relative offset only matched when the asset began at its page start; anywhere
++            // else the packed image pointed past its own blob and the client read foreign memory
++            // (Storm Point load crash with S18 armory-screen images). Targets outside the blob
++            // cannot be expressed and are dropped.
++            if (resolvedPtr && ResolveToPagePtr(resolvedPtr, tgtPageIdx, tgtOff)
++                && tgtPageIdx == rawPageIdx && tgtOff >= rawDataBaseOff && tgtOff < rawDataBaseOff + rawDataSize)
+             {
+                 pp.index = tgtPageIdx;
+-                pp.offset = static_cast<int>(tgtOff);
++                pp.offset = static_cast<int>(tgtOff - rawDataBaseOff);
+             }
+             else
+             {
+-                pp.index = 0;
+-                pp.offset = 0;
++                printf("[UIIA-RAW] asset 0x%llX: pointer at +0x%X targets outside its blob; dropped.\n",
++                    asset->GetAssetGUID(), relOff);
++                memset(rawBuf.get() + relOff, 0, sizeof(PagePtr_t)); // no stale runtime address
++                continue;
+             }
+             // overwrite the resolved pointer with the on-disk index/offset PagePtr form
+             memcpy(rawBuf.get() + relOff, &pp, sizeof(pp));
+diff --git a/src/rsx.vcxproj b/src/rsx.vcxproj
+index f9a0a4b..702fe8c 100644
+--- a/src/rsx.vcxproj
++++ b/src/rsx.vcxproj
+@@ -1,4 +1,4 @@
+-<?xml version="1.0" encoding="utf-8"?>
++﻿<?xml version="1.0" encoding="utf-8"?>
+ <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+   <ItemGroup Label="ProjectConfigurations">
+     <ProjectConfiguration Include="Debug|x64">
+@@ -211,6 +211,7 @@
+     <ClCompile Include="game\rtech\assets\subtitles.cpp" />
+     <ClCompile Include="game\rtech\assets\texture.cpp" />
+     <ClCompile Include="game\rtech\assets\texture_anim.cpp" />
++    <ClCompile Include="game\rtech\assets\texture_extra.cpp" />
+     <ClCompile Include="game\rtech\assets\texture_list.cpp" />
+     <ClCompile Include="game\rtech\assets\ui.cpp" />
+     <ClCompile Include="game\rtech\assets\ui_font_atlas.cpp" />

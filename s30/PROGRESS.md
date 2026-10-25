@@ -59,6 +59,22 @@
   the client connected and starts signon. Milestone D1.
 - -s30_nettrace (loopback packet trace) and -s30_netdiag (connect path observers).
 
+### 2026-10-26: S30 assets for the S3 dedi (docs/10)
+- `tools/dedi_paks.py` rebuilds the dedi's `common_early`, `common_roots`, `common`, `common_mp`, `mp_lobby`,
+  `root_lgnd_skins` (all 804 S30 `root_lgnd_skins_*` paks) and `mp_rr_canyonlands_staging_mu1` from S30, same
+  names: mdl_ v20 -> v10, arig v7 -> v4, aseq v14 (+asqd) -> v7, stgs v2 -> v1, dtbl/stlt/txls repacked;
+  dependencies first, references the dedi cannot resolve at load left unregistered. Gates: re-list of every
+  built pak, converted models vs the S21 dedi's copies.
+- `tools/dedi_map.py`: staging's server BSP rebuilt from S30's (bspconv -dedi, revpk); the old one named 42
+  models S30 does not ship.
+- Tool fixes in workspace clones (`s30/patches/`): RSX (mdl_ v20 raw export, asqd extents, layout and mod
+  export), rmdlconv (S30 RUI table, scaled u16 offsets: legend models had lost all collision), RePak
+  (sub-layout order, vector mods, unregistered refs, per-pak compression); local Oodle DLL for rmdlconv.
+- Weapon scripts: 140 model paths take S30's (`weapon_model_paths.py`); the space elevator takes S30's name.
+- `common_flowstate` and `sdk_s30_dedi` taken out of the workspace dedi.
+- Result: the dedi reaches `ready mp_rr_canyonlands_staging_mu1` with 0 unresolved pak deps; one script error
+  left (bot loadout stat tracker columns split by MMR in S30).
+
 ## Done
 - A1–A4 (inventory, architecture, census, strings diff).
 - E0 boot probe.
@@ -72,5 +88,5 @@
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
 ## Next action
-Stage 2 (signon): map S30's net message table (B1) and the CNetChan/CClientState layouts, then feed the dedi's
-netchannel into the S30 engine. In parallel, the S30 -> S3 server asset pipeline (phase E).
+Server scripts vs S30 data (one error left at map spawn), then stage 2 (signon): map S30's net message table
+(B1) and the CNetChan/CClientState layouts, and feed the dedi's netchannel into the S30 engine.

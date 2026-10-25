@@ -1,0 +1,172 @@
+diff --git a/src/studio/model/rmdl_121.cpp b/src/studio/model/rmdl_121.cpp
+index 35ed209..e397c5b 100644
+--- a/src/studio/model/rmdl_121.cpp
++++ b/src/studio/model/rmdl_121.cpp
+@@ -514,8 +514,12 @@ void ConvertStudioHdr(r5::v8::studiohdr_t* out, T* hdr)
+ 	out->mins = hdr->hull_min;
+ 	out->maxs = hdr->hull_max;
+ 
+-	out->view_bbmin = hdr->view_bbmin;
+-	out->view_bbmax = hdr->view_bbmax;
++	// A zero clipping box means "use the hull" (every S7 model has one); Apex culls by the
++	// clipping box as stored, so a zero box culls dynamic props as a point (as in mdl_53).
++	const bool noViewBox = hdr->view_bbmin.x == 0.f && hdr->view_bbmin.y == 0.f && hdr->view_bbmin.z == 0.f
++		&& hdr->view_bbmax.x == 0.f && hdr->view_bbmax.y == 0.f && hdr->view_bbmax.z == 0.f;
++	out->view_bbmin = noViewBox ? hdr->hull_min : hdr->view_bbmin;
++	out->view_bbmax = noViewBox ? hdr->hull_max : hdr->view_bbmax;
+ 
+ 	// these will probably have to be modified at some point
+ 	out->flags = hdr->flags;
+diff --git a/src/studio/model/rmdl_19s30_v17.cpp b/src/studio/model/rmdl_19s30_v17.cpp
+index 4087c5b..d46fed2 100644
+--- a/src/studio/model/rmdl_19s30_v17.cpp
++++ b/src/studio/model/rmdl_19s30_v17.cpp
+@@ -276,7 +276,8 @@ private:
+ 		if (kind == "followers") return s + static_cast<size_t>(HRaw(210)) * 2;
+ 		if (kind == "srcbones") return s + static_cast<size_t>(HRaw(196)) * 104;
+ 		if (kind == "procmap") return s + static_cast<size_t>(nb);
+-		if (kind == "uipanels") return s + static_cast<size_t>(HRaw(158)) * 16;
++		// mstudiorruiheader_t is 8 bytes (namehash, ruimeshindex); the meshes follow after padding.
++		if (kind == "uipanels") return s + static_cast<size_t>(HRaw(158)) * 8;
+ 		if (kind == "aii")
+ 		{
+ 			for (const SeqInfo& sq : m_seqs)
+@@ -595,6 +596,19 @@ private:
+ 			out.push_back(0);
+ 	}
+ 
++	// A raw gap that reaches past 64 KB keeps its source position mod 32. Header fields
++	// into it (name, surfaceprop and keyvalue strings, the linear bone table) were
++	// encodable in the source only because their targets were 32-aligned there; shifting
++	// the gap by a non-multiple of 32 left them "unencodable, raw kept", i.e. pointing at
++	// stale source offsets (drone_frag_loot's linear bones faulted the dedi pass).
++	void PadForGap(std::vector<char>& out, size_t srcPos, size_t len)
++	{
++		if (out.size() + len < 0x10000)
++			return;
++		while ((static_cast<long long>(out.size()) - static_cast<long long>(srcPos)) & 0x1F)
++			out.push_back(0);
++	}
++
+ 	long long TgtNew(size_t t) const
+ 	{
+ 		for (const Piece& p : m_pieces)
+@@ -891,16 +905,15 @@ private:
+ 		}
+ 		else if (kind == "uipanels")
+ 		{
+-			for (size_t i = 0; i < n / 16; i++)
++			// ruimeshindex (+4) is relative to its own 8-byte header. Reading 16-byte records
++			// relocated phantom headers past the table: the second one was mesh 0's
++			// numparents/numvertices, which the dedi pass then copied as ~64K parents.
++			for (size_t i = 0; i < n / 8; i++)
+ 			{
+-				for (size_t fo : {4, 12})
+-				{
+-					Need(s + i * 16 + fo, 4);
+-					uint32_t v;
+-					memcpy(&v, m_in + s + i * 16 + fo, 4);
+-					structRefs.push_back({ ns + i * 16, fo, 4, 1, ns + i * 16,
+-						s + i * 16 + v });
+-				}
++				Need(s + i * 8 + 4, 4);
++				uint32_t v;
++				memcpy(&v, m_in + s + i * 8 + 4, 4);
++				structRefs.push_back({ ns + i * 8, 4, 4, 1, ns + i * 8, s + i * 8 + v });
+ 			}
+ 		}
+ 	}
+@@ -1071,10 +1084,14 @@ private:
+ 		size_t pos = kS30Hdr;
+ 		bool seqsRebuilt = false;
+ 
++		size_t dumpLen = 0;
++		static const bool s_dumpPieces = getenv_s(&dumpLen, nullptr, 0, "RMDLCONV_DUMP_PIECES") == 0 && dumpLen > 0;
+ 		for (const Piece& p : m_pieces)
+ 		{
+ 			const size_t s = p.s, e = p.e;
+ 			const std::string& k = p.kind;
++			if (s_dumpPieces)
++				printf("[v19s30-piece] %-12s src [0x%zX, 0x%zX) gap-from 0x%zX out 0x%zX\n", k.c_str(), s, e, pos, out.size());
+ 			if (s < pos && e <= pos)
+ 				continue;
+ 			if (k == "seqdesc" && !seqsRebuilt)
+@@ -1094,6 +1111,7 @@ private:
+ 					if (any)
+ 					{
+ 						Warn("seq pre-gap has data");
++						PadForGap(out, pos, s - pos);
+ 						m_gap[pos] = static_cast<long long>(out.size());
+ 						out.insert(out.end(), m_in + pos, m_in + s);
+ 					}
+@@ -1128,6 +1146,7 @@ private:
+ 					if (any)
+ 					{
+ 						Warn((k == "lods" ? "lods" : "bvh") + std::string(" pre-gap has data"));
++						PadForGap(out, pos, s - pos);
+ 						m_gap[pos] = static_cast<long long>(out.size());
+ 						out.insert(out.end(), m_in + pos, m_in + s);
+ 					}
+@@ -1168,12 +1187,14 @@ private:
+ 						}
+ 						if (!strlike)
+ 							Warn("pre-bonedata nonstring with zero slack");
++						PadForGap(out, pos, head - pos);
+ 						m_gap[pos] = static_cast<long long>(out.size());
+ 						out.insert(out.end(), m_in + pos, m_in + head);
+ 					}
+ 				}
+ 				else
+ 				{
++					PadForGap(out, pos, s - pos);
+ 					m_gap[pos] = static_cast<long long>(out.size());
+ 					out.insert(out.end(), m_in + pos, m_in + s);
+ 				}
+@@ -1298,6 +1319,7 @@ private:
+ 		}
+ 		if (pos < m_size)
+ 		{
++			PadForGap(out, pos, m_size - pos);
+ 			m_gap[pos] = static_cast<long long>(out.size());
+ 			out.insert(out.end(), m_in + pos, m_in + m_size);
+ 		}
+diff --git a/src/studio/model/rmdl_8_v17.cpp b/src/studio/model/rmdl_8_v17.cpp
+index 2b14aa7..a04442c 100644
+--- a/src/studio/model/rmdl_8_v17.cpp
++++ b/src/studio/model/rmdl_8_v17.cpp
+@@ -377,8 +377,11 @@ void ConvertRMDL8To17(char* pMDL, const size_t fileSize, const std::string& path
+ 	nh->illumposition = oldHdr->illumposition;
+ 	nh->hull_min     = oldHdr->hull_min;
+ 	nh->hull_max     = oldHdr->hull_max;
+-	nh->view_bbmin   = oldHdr->view_bbmin;
+-	nh->view_bbmax   = oldHdr->view_bbmax;
++	// zero clipping box = "use the hull"; Apex culls by the stored box (see mdl_53)
++	const bool noViewBox = oldHdr->view_bbmin.x == 0.f && oldHdr->view_bbmin.y == 0.f && oldHdr->view_bbmin.z == 0.f
++		&& oldHdr->view_bbmax.x == 0.f && oldHdr->view_bbmax.y == 0.f && oldHdr->view_bbmax.z == 0.f;
++	nh->view_bbmin   = noViewBox ? oldHdr->hull_min : oldHdr->view_bbmin;
++	nh->view_bbmax   = noViewBox ? oldHdr->hull_max : oldHdr->view_bbmax;
+ 	nh->surfacepropLookup = static_cast<uint8_t>(oldHdr->surfacepropLookup);
+ 	nh->illumpositionattachmentindex = static_cast<uint8_t>(oldHdr->illumpositionattachmentindex);
+ 	nh->boneCount    = static_cast<uint16_t>(numbones);
+diff --git a/src/studio/studio_r5_v16.h b/src/studio/studio_r5_v16.h
+index 16fd105..c3788d9 100644
+--- a/src/studio/studio_r5_v16.h
++++ b/src/studio/studio_r5_v16.h
+@@ -17,9 +17,15 @@
+ #pragma once
+ #include <studio/studio.h>
+ 
+-// Macro for offset conversion - v16 uses direct byte offsets
++// The engine decodes a v16+ u16 studio offset as (o & 0xFFFE) << (4 * (o & 1)): the low bit
++// is a x16 scale flag, which is how a 16-bit field reaches past 64 KB (RSX decodes the same
++// way). The identity this replaced misread every scaled field -- e.g. a v17 intermediate's
++// bvhOffset 0x11F7 (= 0x11F60) sent the collision walk into the bone data. 32-bit offsets
++// stay plain byte offsets.
+ #ifndef FIX_OFFSET
+-#define FIX_OFFSET(x) (x)
++inline size_t StudioFixOffset(const uint16_t o) { return static_cast<size_t>(o & 0xFFFE) << (4 * (o & 1)); }
++template <typename T> inline T StudioFixOffset(const T o) { return o; }
++#define FIX_OFFSET(x) StudioFixOffset(x)
+ #endif
+ 
+ #pragma pack(push, 2)

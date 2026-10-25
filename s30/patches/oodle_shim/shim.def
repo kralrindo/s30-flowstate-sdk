@@ -1,0 +1,3 @@
+LIBRARY oo2core_9_win64
+EXPORTS
+    OodleLZ_Decompress

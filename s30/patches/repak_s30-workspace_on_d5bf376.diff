@@ -1,0 +1,405 @@
+diff --git a/src/assets/animrig.cpp b/src/assets/animrig.cpp
+index 2424863..436c60a 100644
+--- a/src/assets/animrig.cpp
++++ b/src/assets/animrig.cpp
+@@ -64,6 +64,10 @@ void Assets::AddAnimRigAsset_v4(CPakFileBuilder* const pak, const PakGuid_t asse
+             const size_t offset = base + (i * sizeof(PakGuid_t));
+             const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&rigChunk.data[offset]);
+ 
++            // stock rigs carry 0xDF5 sentinels in unused sequence slots; keep them raw
++            if ((guid >> 32) == 0)
++                continue;
++
+             Pak_RegisterGuidRefAtOffset(guid, offset, rigChunk, asset);
+         }
+     }
+@@ -124,6 +128,10 @@ void Assets::AddAnimRigAsset_v6(CPakFileBuilder* const pak, const PakGuid_t asse
+             const size_t offset = base + (i * sizeof(PakGuid_t));
+             const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&rigChunk.data[offset]);
+ 
++            // stock rigs carry 0xDF5 sentinels in unused sequence slots; keep them raw
++            if ((guid >> 32) == 0)
++                continue;
++
+             Pak_RegisterGuidRefAtOffset(guid, offset, rigChunk, asset);
+         }
+     }
+diff --git a/src/assets/model.cpp b/src/assets/model.cpp
+index 11cc9a0..4a64783 100644
+--- a/src/assets/model.cpp
++++ b/src/assets/model.cpp
+@@ -145,6 +145,9 @@ static void Model_AllocateIntermediateDataChunk(CPakFileBuilder* const pak, PakP
+                 const size_t offset = base + (i * sizeof(PakGuid_t));
+                 const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&intermediateChunk.data[offset]);
+ 
++                if ((guid >> 32) == 0) // 0xDF5 sentinel slot, left raw
++                    continue;
++
+                 Pak_RegisterGuidRefAtOffset(guid, offset, intermediateChunk, asset);
+             }
+         }
+@@ -164,6 +167,9 @@ static void Model_AllocateIntermediateDataChunk(CPakFileBuilder* const pak, PakP
+                 const size_t offset = base + (i * sizeof(PakGuid_t));
+                 const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&intermediateChunk.data[offset]);
+ 
++                if ((guid >> 32) == 0) // 0xDF5 sentinel slot, left raw
++                    continue;
++
+                 Pak_RegisterGuidRefAtOffset(guid, offset, intermediateChunk, asset);
+             }
+         }
+@@ -478,6 +484,8 @@ void Assets::AddModelAsset_v17(CPakFileBuilder* const pak, const PakGuid_t asset
+                 {
+                     const size_t offset = base + (i * sizeof(PakGuid_t));
+                     const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&nameLump.data[offset]);
++                    if ((guid >> 32) == 0) // 0xDF5 sentinel slot, left raw
++                        continue;
+                     Pak_RegisterGuidRefAtOffset(guid, offset, nameLump, asset);
+                 }
+             }
+@@ -495,6 +503,8 @@ void Assets::AddModelAsset_v17(CPakFileBuilder* const pak, const PakGuid_t asset
+                 {
+                     const size_t offset = base + (i * sizeof(PakGuid_t));
+                     const PakGuid_t guid = *reinterpret_cast<PakGuid_t*>(&nameLump.data[offset]);
++                    if ((guid >> 32) == 0) // 0xDF5 sentinel slot, left raw
++                        continue;
+                     Pak_RegisterGuidRefAtOffset(guid, offset, nameLump, asset);
+                 }
+             }
+@@ -658,6 +668,12 @@ void Assets::AddModelAsset_v17(CPakFileBuilder* const pak, const PakGuid_t asset
+         if (const auto remapped = materialRemap.find(tex->guid); remapped != materialRemap.end())
+             tex->guid = remapped->second;
+ 
++        // Stock models carry small sentinel values (e.g. 0xDF5) in unused material slots.
++        // Respawn's packer leaves those unregistered so the loader keeps the raw value;
++        // registering one fails the pak consistency check. No real guid has a zero high dword.
++        if ((tex->guid >> 32) == 0)
++            continue;
++
+         const size_t pos = reinterpret_cast<char*>(tex) - dataLump.data;
+         const size_t offset = pos + offsetof(mstudiotexture_v16_t, guid);
+ 
+diff --git a/src/assets/rson.cpp b/src/assets/rson.cpp
+index 3daad73..06b0287 100644
+--- a/src/assets/rson.cpp
++++ b/src/assets/rson.cpp
+@@ -48,8 +48,13 @@ void Assets::AddRSONAsset_v1(CPakFileBuilder* const pak, const PakGuid_t assetGu
+ 	PakPageLump_s hdrLump = pak->CreatePageLump(sizeof(RSONAssetHeader_v1_t), SF_HEAD, 8);
+ 	memcpy(hdrLump.data, headerData.data(), sizeof(RSONAssetHeader_v1_t));
+ 
+-	PakPageLump_s cpuLump = pak->CreatePageLump(cpuDataSize, SF_CPU, 8);
+-	memcpy(cpuLump.data, cpuData.data(), cpuDataSize);
++	// an empty rson (e.g. an empty list) is header-only: no cpu block, no pointer fixups
++	PakPageLump_s cpuLump = {};
++	if (cpuDataSize > 0)
++	{
++		cpuLump = pak->CreatePageLump(cpuDataSize, SF_CPU, 8);
++		memcpy(cpuLump.data, cpuData.data(), cpuDataSize);
++	}
+ 
+ 	rapidjson::Value::ConstMemberIterator ptrFixupsIt;
+ 	if (JSON_GetIterator(document, "pointerFixups", JSONFieldType_e::kArray, ptrFixupsIt))
+diff --git a/src/assets/settings.cpp b/src/assets/settings.cpp
+index bb46e09..9a0fb54 100644
+--- a/src/assets/settings.cpp
++++ b/src/assets/settings.cpp
+@@ -366,11 +366,26 @@ static void SettingsAsset_CalculateModValuesBuffers(const rapidjson::Value& modV
+             targetFieldName = JSON_GetValueRequired<const char*>(elem, "field");
+             SettingsLayoutFindByNameResult_s findByName;
+ 
+-            if (!SettingsFieldFinder_FindFieldByAbsoluteName(layout, targetFieldName, findByName))
++            // "<field>.x/.y/.z": a scalar mod on one component of a float2/float3 field (S30
++            // player settings modify poseSettings[n].hull_max per axis). Checked first: the
++            // name finder would resolve the dotted path to the enclosing array field.
++            const size_t nameLen = strlen(targetFieldName);
++            const char comp = nameLen > 2 && targetFieldName[nameLen - 2] == '.' ? targetFieldName[nameLen - 1] : '\0';
++            const int compIndex = comp == 'x' ? 0 : comp == 'y' ? 1 : comp == 'z' ? 2 : -1;
++
++            if (compIndex >= 0 && SettingsFieldFinder_FindFieldByAbsoluteName(layout, std::string(targetFieldName, nameLen - 2).c_str(), findByName)
++                && (findByName.type == SettingsFieldType_e::ST_Float3 || (findByName.type == SettingsFieldType_e::ST_Float2 && compIndex < 2)))
++            {
++                fieldTypeExpected = SettingsFieldType_e::ST_Float;
++                item.valueOffset = findByName.valueOffset + static_cast<uint32_t>(compIndex) * sizeof(float);
++            }
++            else if (SettingsFieldFinder_FindFieldByAbsoluteName(layout, targetFieldName, findByName))
++            {
++                fieldTypeExpected = findByName.type;
++                item.valueOffset = findByName.valueOffset;
++            }
++            else
+                 Error("Settings mod value #%zu has an absolute field name of \"%s\" which doesn't exist in the given settings layout.\n", elemIndex, targetFieldName);
+-
+-            fieldTypeExpected = findByName.type;
+-            item.valueOffset = findByName.valueOffset;
+         }
+ 
+         // Make sure the mod type is compatible with the settings field type.
+diff --git a/src/assets/settings_layout.cpp b/src/assets/settings_layout.cpp
+index a9e71b8..b437653 100644
+--- a/src/assets/settings_layout.cpp
++++ b/src/assets/settings_layout.cpp
+@@ -411,7 +411,10 @@ static void SettingsLayout_ParseTable(CPakFileBuilder* const pak, const char* co
+ 
+     result.typeMap.resize(numTypeNames);
+ 
+-    uint32_t lastUsedSublayout = 0;
++    // Fields reach their sub-layout through indexMap, so the indices need not rise in field
++    // order (S30's settings_player_layout puts damageMilestones, sub-layout 0, after the gib
++    // arrays 1-4); each must just be used once and exist.
++    std::vector<bool> usedSubLayouts;
+     uint32_t numSubLayouts = 0;
+ 
+     for (size_t i = 0; i < numTypeNames; i++)
+@@ -433,16 +436,26 @@ static void SettingsLayout_ParseTable(CPakFileBuilder* const pak, const char* co
+         {
+             const uint32_t curLayoutIndex = result.indexMap[i];
+ 
+-            if (numSubLayouts && curLayoutIndex <= lastUsedSublayout)
++            if (curLayoutIndex >= usedSubLayouts.size())
++                usedSubLayouts.resize(curLayoutIndex + 1, false);
++
++            if (usedSubLayouts[curLayoutIndex])
+             {
+                 Error("Settings layout table \"%s\" contains field \"%s\" that is mapped to sub-layout #%u, but this index has already been used.\n",
+                     settingsLayoutFile.c_str(), result.fieldNames[i].c_str(), curLayoutIndex);
+             }
+ 
+-            lastUsedSublayout = numSubLayouts++;
++            usedSubLayouts[curLayoutIndex] = true;
++            numSubLayouts++;
+         }
+     }
+ 
++    if (usedSubLayouts.size() > numSubLayouts)
++    {
++        Error("Settings layout table \"%s\" maps its %u array fields to sub-layout indices up to #%zu; they must be 0..%u.\n",
++            settingsLayoutFile.c_str(), numSubLayouts, usedSubLayouts.size() - 1, numSubLayouts - 1);
++    }
++
+     result.subLayoutCount = numSubLayouts;
+     result.highestSubLayoutIndex = numSubLayouts;
+ }
+diff --git a/src/logic/buildsettings.cpp b/src/logic/buildsettings.cpp
+index 140fab7..0ecf0f9 100644
+--- a/src/logic/buildsettings.cpp
++++ b/src/logic/buildsettings.cpp
+@@ -7,6 +7,9 @@
+ #include "utils/utils.h"
+ 
+ #include "buildsettings.h"
++#include <fstream>
++
++std::unordered_set<uint64_t> g_unregisteredGuidRefs; // declared in pakfile.h
+ 
+ CBuildSettings::CBuildSettings()
+ {
+@@ -51,4 +54,20 @@ void CBuildSettings::Init(const js::Document& doc, const char* const buildMapFil
+ 		AddFlags(PF_KEEP_CLIENT);
+ 
+ 	g_showDebugLogs = JSON_GetValueOrDefault(doc, "showDebugInfo", false);
++
++	// One hex guid per line; see g_unregisteredGuidRefs.
++	if (const char* const refsFile = JSON_GetValueOrDefault(doc, "unregisteredRefsFile", static_cast<const char*>(nullptr)))
++	{
++		std::ifstream in(refsFile);
++		if (!in.is_open())
++			Error("Failed to open unregisteredRefsFile \"%s\".\n", refsFile);
++
++		std::string line;
++		while (std::getline(in, line))
++		{
++			if (!line.empty())
++				g_unregisteredGuidRefs.insert(std::stoull(line, nullptr, 16));
++		}
++		Log("*** %zu guids are written without a pak dependency (unregisteredRefsFile).\n", g_unregisteredGuidRefs.size());
++	}
+ }
+diff --git a/src/logic/pakfile.cpp b/src/logic/pakfile.cpp
+index d8e8dd9..cbc7c36 100644
+--- a/src/logic/pakfile.cpp
++++ b/src/logic/pakfile.cpp
+@@ -205,8 +205,32 @@ PakStreamSetEntry_s CPakFileBuilder::AddStreamingDataEntry(const int64_t size, c
+ 		assert(0);
+ 	}
+ 
++	// A cache hit may point into any starpak, but the runtime only takes a few per set: reuse
++	// cached data only in a starpak this pak already references, or while a slot is still
++	// free once one is kept for the pak's own starpak.
++	const bool mandatory = set == STREAMING_SET_MANDATORY;
++	const std::vector<std::string>& refs = mandatory ? m_mandatoryStreamFilePaths : m_optionalStreamFilePaths;
++	const std::string& own = m_streamBuilder->GetStreamFileName(set);
++
++	const auto accept = [&](const std::string& path) -> bool
++	{
++		bool ownReferenced = false;
++
++		for (const std::string& ref : refs)
++		{
++			if (ref == path)
++				return true;
++
++			if (ref == own)
++				ownReferenced = true;
++		}
++
++		const size_t reserved = (ownReferenced || own.empty()) ? 0 : 1;
++		return refs.size() + 1 + reserved <= GetMaxStreamingFileHandlesPerSet();
++	};
++
+ 	StreamAddEntryResults_s results;
+-	m_streamBuilder->AddStreamingDataEntry(size, data, set, results);
++	m_streamBuilder->AddStreamingDataEntry(size, data, set, results, accept);
+ 
+ 	PakStreamSetEntry_s block;
+ 
+diff --git a/src/logic/pakfile.h b/src/logic/pakfile.h
+index 63b7fbf..835ead5 100644
+--- a/src/logic/pakfile.h
++++ b/src/logic/pakfile.h
+@@ -219,8 +219,14 @@ private:
+ 	std::vector<std::string> m_optionalStreamFilePaths;
+ };
+ 
++// Guids whose references are written but not registered as pak dependencies, from the
++// build list's "unregisteredRefsFile": assets of types the target runtime cannot load
++// (S30 odla/odlp/wepn named by settings, for the S3 dedi), which would otherwise be
++// unresolved deps on every load.
++extern std::unordered_set<PakGuid_t> g_unregisteredGuidRefs;
++
+ // if the asset already existed, the function will return true.
+-inline bool Pak_RegisterGuidRefAtOffset(const PakGuid_t guid, const size_t offset, 
++inline bool Pak_RegisterGuidRefAtOffset(const PakGuid_t guid, const size_t offset,
+ 	PakPageLump_s& chunk, PakAsset_t& asset)
+ {
+ 	// NULL guids should never be added. we check it here because otherwise we
+@@ -230,6 +236,15 @@ inline bool Pak_RegisterGuidRefAtOffset(const PakGuid_t guid, const size_t offse
+ 	if (guid == 0)
+ 		return false;
+ 
++	// The runtime turns a registered slot into a pointer, and NULLs one it cannot resolve;
++	// an unregistered slot keeps whatever is written, so write that NULL here.
++	if (g_unregisteredGuidRefs.contains(guid))
++	{
++		if (chunk.data && offset + sizeof(PakGuid_t) <= static_cast<size_t>(chunk.size))
++			*reinterpret_cast<PakGuid_t*>(chunk.data + offset) = 0;
++		return false;
++	}
++
+ 	asset.AddGuid(chunk.GetPointer(offset), guid);
+ 	return true;
+ }
+diff --git a/src/logic/streamcache.cpp b/src/logic/streamcache.cpp
+index 26a6b45..20ae338 100644
+--- a/src/logic/streamcache.cpp
++++ b/src/logic/streamcache.cpp
+@@ -311,14 +311,20 @@ StreamCacheFindParams_s CStreamCache::CreateParams(const uint8_t* const data, co
+ 	return ret;
+ }
+ 
+-bool CStreamCache::Find(const StreamCacheFindParams_s& params, StreamCacheFindResult_s& result, const bool optional)
++bool CStreamCache::Find(const StreamCacheFindParams_s& params, StreamCacheFindResult_s& result, const bool optional,
++	const std::function<bool(const std::string&)>& accept)
+ {
+ 	for (const StreamCacheDataEntry_s& entry : m_dataEntries)
+ 	{
+ 		if (entry.dataSize != params.size)
+ 			continue;
+ 
+-		const StreamCacheFileEntry_s& file = m_streamFiles[entry.pathIndex];
++		const size_t pathIndex = entry.GetPathIndex();
++
++		if (pathIndex >= m_streamFiles.size())
++			continue;
++
++		const StreamCacheFileEntry_s& file = m_streamFiles[pathIndex];
+ 
+ 		if (file.isOptional != optional)
+ 			continue;
+@@ -329,6 +335,9 @@ bool CStreamCache::Find(const StreamCacheFindParams_s& params, StreamCacheFindRe
+ 		if (!IsStreamFileInFilter(file.streamFilePath))
+ 			continue; // note(amos): don't return here, as this data can also exist in other stream files that are in the filter!
+ 
++		if (accept && !accept(file.streamFilePath))
++			continue; // the pak cannot reference this stream file; the data may also be in one it can
++
+ 		result.fileEntry = &file;
+ 		result.dataEntry = &entry;
+ 
+diff --git a/src/logic/streamcache.h b/src/logic/streamcache.h
+index 8737cf3..da85bcc 100644
+--- a/src/logic/streamcache.h
++++ b/src/logic/streamcache.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ #include <filesystem>
++#include <functional>
+ #include <utils/utils.h>
+ 
+ #define STREAM_CACHE_FILE_MAGIC ('S'+('R'<<8)+('M'<<16)+('p'<<24))
+@@ -31,6 +32,10 @@ struct StreamCacheDataEntry_s
+ 	int64_t pathIndex : 12;
+ 	int64_t dataSize;
+ 	__m128i hash;
++
++	// pathIndex holds an unsigned index (up to 4095 stream files); the signed bitfield
++	// would read indices >= 2048 back as negative.
++	inline size_t GetPathIndex() const { return static_cast<size_t>(pathIndex) & 0xFFF; }
+ };
+ 
+ struct StreamCacheFindParams_s
+@@ -57,7 +62,10 @@ public:
+ 
+ 	static StreamCacheFindParams_s CreateParams(const uint8_t* const data, const int64_t size, const char* const streamFilePath);
+ 
+-	bool Find(const StreamCacheFindParams_s& params, StreamCacheFindResult_s& result, const bool optional);
++	// accept: optional predicate on the stream file path; a match in a stream file it
++	// rejects is skipped (the same data may still be found in an accepted one).
++	bool Find(const StreamCacheFindParams_s& params, StreamCacheFindResult_s& result, const bool optional,
++		const std::function<bool(const std::string&)>& accept = nullptr);
+ 	void Add(const StreamCacheFindParams_s& params, const int64_t offset, const bool optional);
+ 
+ 	void WriteCacheFileToIOStream(BinaryIO& io);
+diff --git a/src/logic/streamfile.cpp b/src/logic/streamfile.cpp
+index 98b6242..0805fa8 100644
+--- a/src/logic/streamfile.cpp
++++ b/src/logic/streamfile.cpp
+@@ -246,7 +246,7 @@ void CStreamFileBuilder::FinishStreamFileStream(const PakStreamSet_e set)
+ // purpose: adds new starpak data entry
+ //-----------------------------------------------------------------------------
+ bool CStreamFileBuilder::AddStreamingDataEntry(const int64_t size, const uint8_t* const data,
+-	const PakStreamSet_e set, StreamAddEntryResults_s& outResults)
++	const PakStreamSet_e set, StreamAddEntryResults_s& outResults, const std::function<bool(const std::string&)>& accept)
+ {
+ 	const bool isMandatory = set == STREAMING_SET_MANDATORY;
+ 	const std::string& newStarPak = isMandatory ? m_mandatoryStreamFileName : m_optionalStreamFileName;
+@@ -271,10 +271,10 @@ bool CStreamFileBuilder::AddStreamingDataEntry(const int64_t size, const uint8_t
+ 	StreamCacheFindParams_s params = m_streamCache.CreateParams(data, size, newStarPak.c_str());
+ 	StreamCacheFindResult_s result;
+ 
+-	if (m_streamCache.Find(params, result, !isMandatory))
++	if (m_streamCache.Find(params, result, !isMandatory, accept))
+ 	{
+ 		outResults.streamFile = result.fileEntry->streamFilePath.c_str();
+-		outResults.pathIndex = result.dataEntry->pathIndex;
++		outResults.pathIndex = result.dataEntry->GetPathIndex();
+ 		outResults.dataOffset = result.dataEntry->dataOffset;
+ 
+ 		return false; // Data wasn't added, but mapped to existing data.
+diff --git a/src/logic/streamfile.h b/src/logic/streamfile.h
+index c88c001..689fa1b 100644
+--- a/src/logic/streamfile.h
++++ b/src/logic/streamfile.h
+@@ -23,7 +23,12 @@ public:
+ 	void CreateStreamFileStream(const std::string& streamFilePath, const PakStreamSet_e set);
+ 	void FinishStreamFileStream(const PakStreamSet_e set);
+ 
+-	bool AddStreamingDataEntry(const int64_t size, const uint8_t* const data, const PakStreamSet_e set, StreamAddEntryResults_s& results);
++	// accept: whether the calling pak can reference a cached stream file (see CStreamCache::Find).
++	bool AddStreamingDataEntry(const int64_t size, const uint8_t* const data, const PakStreamSet_e set, StreamAddEntryResults_s& results,
++		const std::function<bool(const std::string&)>& accept = nullptr);
++
++	inline const std::string& GetStreamFileName(const PakStreamSet_e set) const
++		{ return set == STREAMING_SET_MANDATORY ? m_mandatoryStreamFileName : m_optionalStreamFileName; };
+ 
+ 	inline size_t GetMandatoryStreamingAssetCount() const { return m_mandatoryStreamingDataBlocks.size(); };
+ 	inline size_t GetOptionalStreamingAssetCount() const { return m_optionalStreamingDataBlocks.size(); };
