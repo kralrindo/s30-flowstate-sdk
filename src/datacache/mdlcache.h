@@ -537,6 +537,7 @@ public:
 	static MDLHandle_t GetErrorModelHandle(void);
 	static bool HasErrorModel(void);
 	static bool IsKnownBadModel(const MDLHandle_t handle);
+	bool FindErrorModelByName(void);
 
 
 	inline studiodata_t* GetStudioData(const MDLHandle_t handle)

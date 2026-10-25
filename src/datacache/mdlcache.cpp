@@ -796,7 +796,60 @@ studiohwdata_t* CMDLCache::GetHardwareData(CMDLCache* const cache, const MDLHand
 //-----------------------------------------------------------------------------
 studiohdr_t* CMDLCache::GetErrorModel(void)
 {
+    // The fallback used to be remembered only as a side effect of FindMDL landing on the
+    // error model, which nothing on the dedi does before the first missing model, so every
+    // missing model was fatal. Resolve mdl/error.rmdl by name when nothing is cached yet.
+    if (!g_StudioMdlFallbackHandler.HasFallbackModel() && g_pMDLCache)
+        g_pMDLCache->FindErrorModelByName();
+
     return g_StudioMdlFallbackHandler.GetFallbackModelHeader();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: caches mdl/error.rmdl as the fallback model, found by name in the
+//          model dictionary (its header names itself "mdl/error", without the
+//          extension, so the name check in FindMDL never matches it)
+// Output : true if the fallback is set
+//-----------------------------------------------------------------------------
+bool CMDLCache::FindErrorModelByName(void)
+{
+    MDLHandle_t handle;
+    studiodata_t* studioData;
+    {
+        AUTO_LOCK(m_MDLMutex);
+        handle = m_MDLDict.Find(ERROR_MODEL);
+
+        if (handle == m_MDLDict.InvalidIndex())
+        {
+            static bool s_bWarned = false;
+            if (!s_bWarned)
+            {
+                s_bWarned = true;
+                Warning(eDLL_T::ENGINE, "[MDL-FALLBACK] \"%s\" is not in the model dictionary yet; no fallback model.\n", ERROR_MODEL);
+            }
+            return false;
+        }
+
+        studioData = m_MDLDict.Element(handle);
+    }
+
+    studiomodelcache_t* const modelCache = studioData ? studioData->GetModelCache() : nullptr;
+    studiohdr_t* const studioHdr = IsValidDataCacheHandle(modelCache) ? modelCache->GetStudioHdr() : nullptr;
+
+    if (!studioHdr)
+    {
+        static bool s_bWarned = false;
+        if (!s_bWarned)
+        {
+            s_bWarned = true;
+            Warning(eDLL_T::ENGINE, "[MDL-FALLBACK] \"%s\" (handle %hu) has no loaded model data; no fallback model.\n", ERROR_MODEL, handle);
+        }
+        return false;
+    }
+
+    g_StudioMdlFallbackHandler.SetFallbackModel(studioHdr, handle);
+    Msg(eDLL_T::ENGINE, "[MDL-FALLBACK] \"%s\" (handle %hu) is the fallback for missing models.\n", ERROR_MODEL, handle);
+    return true;
 }
 const char* CMDLCache::GetErrorModelName(void)
 {

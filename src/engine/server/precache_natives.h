@@ -1,7 +1,7 @@
 //=============================================================================//
 //
 // Purpose: PrecacheSkinName / PrecacheOnDemandLoadModel natives.
-// SkinNames table: maxEntries=1024, userDataMaxSize=0, allowClientSideAddString=1.
+// SkinNames table: maxEntries=4096, userDataMaxSize=0, allowClientSideAddString=1.
 //
 //=============================================================================//
 #ifndef PRECACHE_NATIVES_DEDI_H

@@ -57,12 +57,15 @@ static void InjectSkinNamesTable()
 		const CreateStringTable_t CreateStringTable =
 			reinterpret_cast<CreateStringTable_t>(vtable[1]);
 
-		// 1024 entries; 0/0/1 matches Materials/WeaponNames/ScriptNames.
+		// 4096 entries (12-bit index), the size the engine itself gives modelprecache and
+		// ScriptNames. S30 cosmetics precache ~1300 distinct character skin names
+		// (sh_character_cosmetics SetupCharacterSkin); 1024 overflowed ("SkinNames is full").
+		// Must stay a power of two. 0/0/1 matches Materials/WeaponNames/ScriptNames.
 		void* const skinTable = CreateStringTable(
 			container,
 			/*allowCreation*/        1,
 			"SkinNames",
-			/*maxEntries*/           1024,
+			/*maxEntries*/           4096,
 			/*userDataMaxSize*/      0,
 			/*userDataNetworkBits*/  0,
 			/*allowClientSideAddStr*/1);
