@@ -12,6 +12,8 @@
 #include "net_guard_s30.h"
 #include "overlay_s30.h"
 #include "concommand_s30.h"
+#include "identity_s30.h"
+#include "bridge_handshake_s30.h"
 #include "sdk_commands_s30.h"
 
 struct S30Command_t
@@ -116,6 +118,7 @@ static void Cmd_Status(int, const char* const*)
 	S30Log("client_s30 on %s\n", pImage ? pImage->pszBuild : "(unknown image)");
 	S30Log("  network guard: %ld outbound attempts refused\n", S30NetGuard_BlockedCount());
 	S30Log("  overlay: %s, %lld frames presented\n", S30Overlay_IsVisible() ? "open" : "closed", S30Overlay_PresentCount());
+	S30Log("  S3 bridge: %s\n", S30Bridge_StateName());
 }
 
 static void Cmd_Overlay(int nArgs, const char* const* ppszArgs)
@@ -187,8 +190,26 @@ static void Cmd_Cbuf(int nArgs, const char* const* ppszArgs)
 		S30Log("Cbuf_AddText unresolved\n");
 }
 
+static void Cmd_Identity(int, const char* const*)
+{
+	S30Identity_Print();
+}
+
+static void Cmd_BridgeConnect(int nArgs, const char* const* ppszArgs)
+{
+	S30Bridge_Connect(nArgs > 1 ? ppszArgs[1] : "127.0.0.1:37015");
+}
+
+static void Cmd_BridgeDisconnect(int, const char* const*)
+{
+	S30Bridge_Disconnect();
+}
+
 void S30Commands_RegisterBuiltins(void)
 {
+	S30Commands_Register("bridge_connect", "bridge_connect [ip:port] -- S3 dedi handshake (default 127.0.0.1:37015)", Cmd_BridgeConnect);
+	S30Commands_Register("bridge_disconnect", "reset the S3 bridge handshake", Cmd_BridgeDisconnect);
+	S30Commands_Register("sdk_identity", "show the offline platform identity (Nucleus id, tokens)", Cmd_Identity);
 	S30Commands_Register("sdk_cbuf", "sdk_cbuf <text> -- send text to the engine command buffer, skipping SDK commands", Cmd_Cbuf);
 	S30Commands_Register("sdk_cvar", "sdk_cvar <name> -- whether an engine command/convar exists, and its flags", Cmd_Cvar);
 	S30Commands_Register("sdk_unlock_devcvars", "clear DEVELOPMENTONLY/HIDDEN on all engine commands and convars", Cmd_UnlockDevCvars);

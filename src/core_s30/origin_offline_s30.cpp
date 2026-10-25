@@ -59,8 +59,60 @@ static bool OriginOffline_Write(uint8_t* pSite, const uint8_t* pBytes, size_t nL
 	return true;
 }
 
+//-----------------------------------------------------------------------------
+// G: connect without an Origin identity. Both connect handlers (0x2F0B50 and
+// 0x2F1220 on S30.1) refuse to start unless ICommandLine vfunc 14 (0x238480,
+// "return 0" in retail) says otherwise, or the Nucleus id, profile flag, auth
+// code and NucleusToken are all present; offline none are, and the command
+// silently becomes "#ORIGIN_REQUEST_TOKEN_FAILURE" + Disconnected. The bypass
+// branch already exists: jnz -> jmp (90 E9, same rel32). The S3 dedi never sees
+// S30's tokens; the bridge sends S3 its own connect.
+//-----------------------------------------------------------------------------
+static const char* const s_pszPatternConnectGate =
+	"FF 50 70 84 C0 0F 85 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 83 F9 01 75 ?? 8B 05 ?? ?? ?? ?? 44 8B C3 85 C0";
+
+static int OriginOffline_PatchConnectGates(void)
+{
+	uint8_t bytes[64];
+	bool mask[64];
+	const size_t nLen = S30Pattern_Parse(s_pszPatternConnectGate, bytes, mask, sizeof(bytes));
+	const uintptr_t nBase = S30Image_Base();
+	const auto* pNt = reinterpret_cast<const IMAGE_NT_HEADERS*>(nBase + reinterpret_cast<const IMAGE_DOS_HEADER*>(nBase)->e_lfanew);
+	const IMAGE_SECTION_HEADER* pSec = IMAGE_FIRST_SECTION(pNt);
+	int nPatched = 0;
+	for (WORD i = 0; i < pNt->FileHeader.NumberOfSections; ++i, ++pSec)
+	{
+		if (memcmp(pSec->Name, ".text", 5) != 0)
+			continue;
+		uint8_t* const pStart = reinterpret_cast<uint8_t*>(nBase + pSec->VirtualAddress);
+		for (size_t off = 0; off + nLen <= pSec->Misc.VirtualSize && nPatched < 4; ++off)
+		{
+			size_t k = 0;
+			while (k < nLen && (!mask[k] || pStart[off + k] == bytes[k]))
+				++k;
+			if (k != nLen)
+				continue;
+			uint8_t* const pJnz = pStart + off + 5; // 0F 85 rel32
+			if (pJnz[0] != 0x0F || pJnz[1] != 0x85)
+				continue;
+			static const uint8_t s_jmp[2] = { 0x90, 0xE9 };
+			if (OriginOffline_Write(pJnz, s_jmp, sizeof(s_jmp)))
+			{
+				++nPatched;
+				S30Log("[OFFLINE] connect identity gate opened at 0x%llX\n", static_cast<unsigned long long>(S30Pattern_Rva(pJnz)));
+			}
+		}
+	}
+	return nPatched;
+}
+
 bool S30OriginOffline_Apply(void)
 {
+	// Two connect handlers on S30.1; anything else means the code moved -- leave it.
+	const int nGates = OriginOffline_PatchConnectGates();
+	if (nGates != 2)
+		S30Log("[OFFLINE] patch G: %d connect gates patched (expected 2)\n", nGates);
+
 	int nMatches = 0;
 
 	// D

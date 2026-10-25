@@ -20,6 +20,8 @@
 #include "sdk_commands_s30.h"
 #include "overlay_s30.h"
 #include "concommand_s30.h"
+#include "net_diag_s30.h"
+#include "identity_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -68,6 +70,7 @@ static DWORD WINAPI BootWatch_Thread(LPVOID)
 		}
 		if (nSec == 20 || nSec == 40)
 			S30ScriptPrint_Diag();
+		S30Identity_Pump();
 		// Engine registration waits for the engine's own statics (ICvar ready).
 		static bool s_bEngineCommandsDone = false;
 		if (!s_bEngineCommandsDone && S30ConCommand_IsReady())
@@ -120,6 +123,8 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30ScriptPrint_Install();
 	S30Commands_RegisterBuiltins();
 	S30ConCommand_Init();
+	S30NetDiag_Install();
+	S30Identity_Init();
 	S30Console_StartInput();
 
 	s_bEarlyInitDone = true;

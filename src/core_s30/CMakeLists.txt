@@ -37,9 +37,18 @@ add_sources( SOURCE_GROUP "Overlay"
     "overlay_s30.h"
 )
 
+add_sources( SOURCE_GROUP "Net"
+    "bridge_handshake_s30.cpp"
+    "bridge_handshake_s30.h"
+    "net_diag_s30.cpp"
+    "net_diag_s30.h"
+)
+
 add_sources( SOURCE_GROUP "Platform"
     "net_guard_s30.cpp"
     "net_guard_s30.h"
+    "identity_s30.cpp"
+    "identity_s30.h"
     "offline_s30.cpp"
     "offline_s30.h"
     "origin_offline_s30.cpp"

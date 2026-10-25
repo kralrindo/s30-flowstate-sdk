@@ -193,6 +193,49 @@ static int WSAAPI h_WSAIoctl(SOCKET s, DWORD nCode, LPVOID pIn, DWORD nIn, LPVOI
 	return nResult;
 }
 
+//-----------------------------------------------------------------------------
+// -s30_nettrace: loopback datagrams in both directions, size + first bytes in
+// hex, capped so a session cannot flood the log. Protocol work starts here.
+//-----------------------------------------------------------------------------
+static bool s_bTrace = false;
+static volatile LONG s_nTraced = 0;
+static const LONG s_nMaxTraced = 400;
+
+static void NetGuard_TracePacket(const char* pszDir, const sockaddr* pAddr, const char* pBuf, int nLen)
+{
+	if (!s_bTrace || nLen <= 0 || InterlockedIncrement(&s_nTraced) > s_nMaxTraced)
+		return;
+	char szAddr[96];
+	NetGuard_FormatAddr(pAddr, szAddr, sizeof(szAddr));
+	char szHex[48 * 3 + 1];
+	const int nShow = nLen < 48 ? nLen : 48;
+	for (int i = 0; i < nShow; ++i)
+		snprintf(szHex + i * 3, 4, "%02X ", static_cast<unsigned char>(pBuf[i]));
+	szHex[nShow * 3] = '\0';
+	S30LogFile("[NET-TRACE] %s %s len=%d %s\n", pszDir, szAddr, nLen, szHex);
+}
+
+static decltype(&recvfrom) v_recvfrom = recvfrom;
+static decltype(&WSARecvFrom) v_WSARecvFrom = WSARecvFrom;
+
+static int WSAAPI h_recvfrom(SOCKET s, char* pBuf, int nLen, int nFlags, sockaddr* pFrom, int* pnFromLen)
+{
+	const int nResult = v_recvfrom(s, pBuf, nLen, nFlags, pFrom, pnFromLen);
+	if (nResult > 0)
+		NetGuard_TracePacket("recv", pFrom, pBuf, nResult);
+	return nResult;
+}
+
+static int WSAAPI h_WSARecvFrom(SOCKET s, LPWSABUF pBufs, DWORD nBufs, LPDWORD pRecvd, LPDWORD pFlags, sockaddr* pFrom, LPINT pnFromLen,
+	LPWSAOVERLAPPED pOv, LPWSAOVERLAPPED_COMPLETION_ROUTINE pfnCompletion)
+{
+	const int nResult = v_WSARecvFrom(s, pBufs, nBufs, pRecvd, pFlags, pFrom, pnFromLen, pOv, pfnCompletion);
+	// Overlapped receives complete later; only synchronous results are traced.
+	if (nResult == 0 && !pOv && pRecvd && nBufs)
+		NetGuard_TracePacket("recv", pFrom, pBufs[0].buf, static_cast<int>(*pRecvd));
+	return nResult;
+}
+
 static int WSAAPI h_sendto(SOCKET s, const char* pBuf, int nLen, int nFlags, const sockaddr* pTo, int nToLen)
 {
 	if (!NetGuard_IsLoopback(pTo))
@@ -202,6 +245,7 @@ static int WSAAPI h_sendto(SOCKET s, const char* pBuf, int nLen, int nFlags, con
 		NetGuard_Block("sendto", sz, _ReturnAddress());
 		return nLen; // reported as sent: a refused datagram makes some callers spin
 	}
+	NetGuard_TracePacket("send", pTo, pBuf, nLen);
 	return v_sendto(s, pBuf, nLen, nFlags, pTo, nToLen);
 }
 
@@ -216,6 +260,8 @@ static int WSAAPI h_WSASendTo(SOCKET s, LPWSABUF pBufs, DWORD nBufs, LPDWORD pSe
 		WSASetLastError(WSAENETUNREACH);
 		return SOCKET_ERROR;
 	}
+	if (nBufs)
+		NetGuard_TracePacket("send", pTo, pBufs[0].buf, static_cast<int>(pBufs[0].len));
 	return v_WSASendTo(s, pBufs, nBufs, pSent, nFlags, pTo, nToLen, pOv, pfnCompletion);
 }
 
@@ -328,6 +374,12 @@ bool S30NetGuard_Install(void)
 	DetourAttach(&reinterpret_cast<PVOID&>(v_GetAddrInfoExW), h_GetAddrInfoExW);
 	DetourAttach(&reinterpret_cast<PVOID&>(v_gethostbyname), h_gethostbyname);
 	DetourAttach(&reinterpret_cast<PVOID&>(v_WSAIoctl), h_WSAIoctl);
+	s_bTrace = strstr(GetCommandLineA(), "-s30_nettrace") != nullptr;
+	if (s_bTrace)
+	{
+		DetourAttach(&reinterpret_cast<PVOID&>(v_recvfrom), h_recvfrom);
+		DetourAttach(&reinterpret_cast<PVOID&>(v_WSARecvFrom), h_WSARecvFrom);
+	}
 	if (v_WinHttpConnect)
 		DetourAttach(&reinterpret_cast<PVOID&>(v_WinHttpConnect), h_WinHttpConnect);
 	if (v_InternetConnectW)
