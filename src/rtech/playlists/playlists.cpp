@@ -1225,6 +1225,8 @@ static bool Playlists_SpliceModPatches(const char* pBase, const size_t nBase, st
 // Purpose: engine playlist file read; mod patches are merged into the text it
 //          loaded before the engine parses it
 //-----------------------------------------------------------------------------
+static void Playlists_HideClientPatch(void);
+
 static bool Playlists_ReadFile(void)
 {
 	if (!v_Playlists_ReadFile())
@@ -1238,25 +1240,72 @@ static bool Playlists_ReadFile(void)
 
 	std::string merged;
 	if (!Playlists_SpliceModPatches(pBase, nBase, merged))
+	{
+		Playlists_HideClientPatch();
 		return true;
-
-	if (merged.size() >= static_cast<size_t>(INT_MAX))
-		return true;
+	}
 
 	// The engine frees and reallocates this buffer through the same allocator.
-	char* const pNew = static_cast<char*>(MemAllocSingleton()->Alloc(merged.size() + 1));
-	if (!pNew)
-		return true;
+	char* const pNew = merged.size() < static_cast<size_t>(INT_MAX)
+		? static_cast<char*>(MemAllocSingleton()->Alloc(merged.size() + 1)) : nullptr;
+	if (pNew)
+	{
+		memcpy(pNew, merged.data(), merged.size());
+		pNew[merged.size()] = '\0';
 
-	memcpy(pNew, merged.data(), merged.size());
-	pNew[merged.size()] = '\0';
+		MemAllocSingleton()->Free(*g_ppPlaylistFileText);
+		*g_ppPlaylistFileText = pNew;
+		*g_pnPlaylistFileTextSize = static_cast<int>(merged.size() + 1);
 
-	MemAllocSingleton()->Free(*g_ppPlaylistFileText);
-	*g_ppPlaylistFileText = pNew;
-	*g_pnPlaylistFileTextSize = static_cast<int>(merged.size() + 1);
-
-	Msg(eDLL_T::ENGINE, "[PLAYLIST] merged mod patches in memory (no disk write)\n");
+		Msg(eDLL_T::ENGINE, "[PLAYLIST] merged mod patches in memory (no disk write)\n");
+	}
+	Playlists_HideClientPatch();
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+// S30.1 client playlists (s30/docs/18): the S30 client merges the section after its
+// patch marker ("@@@@ -<[PaTcH]>- @@@@", behind "//" here) over the text the server
+// sends; this engine's KeyValues parser cannot read that section's syntax and stops on
+// it with a modal error. The engine parses the text before the marker; the full text
+// goes back after the load, so svc_Playlists still carries it.
+//-----------------------------------------------------------------------------
+static std::string s_strPlaylistFullText;
+
+static void Playlists_HideClientPatch(void)
+{
+	s_strPlaylistFullText.clear();
+	if (!g_ppPlaylistFileText || !g_pnPlaylistFileTextSize || !*g_ppPlaylistFileText || *g_pnPlaylistFileTextSize <= 0)
+		return;
+	char* const pText = *g_ppPlaylistFileText;
+	const size_t nText = strnlen(pText, static_cast<size_t>(*g_pnPlaylistFileTextSize));
+	const char* const pMarker = V_strnistr(pText, "@@@@ -<[PaTcH]>- @@@@", static_cast<int>(nText));
+	if (!pMarker)
+		return;
+	size_t nCut = static_cast<size_t>(pMarker - pText);
+	while (nCut > 0 && pText[nCut - 1] != '\n')
+		--nCut; // the whole marker line
+	s_strPlaylistFullText.assign(pText, nText);
+	pText[nCut] = '\0';
+	*g_pnPlaylistFileTextSize = static_cast<int>(nCut + 1);
+	Msg(eDLL_T::ENGINE, "[PLAYLIST] client patch section (%zu bytes) kept for clients, not parsed here\n", nText - nCut);
+}
+
+static void Playlists_RestoreClientPatch(void)
+{
+	if (s_strPlaylistFullText.empty() || !g_ppPlaylistFileText || !g_pnPlaylistFileTextSize)
+		return;
+	char* const pNew = static_cast<char*>(MemAllocSingleton()->Alloc(s_strPlaylistFullText.size() + 1));
+	if (pNew)
+	{
+		memcpy(pNew, s_strPlaylistFullText.data(), s_strPlaylistFullText.size());
+		pNew[s_strPlaylistFullText.size()] = '\0';
+		if (*g_ppPlaylistFileText)
+			MemAllocSingleton()->Free(*g_ppPlaylistFileText);
+		*g_ppPlaylistFileText = pNew;
+		*g_pnPlaylistFileTextSize = static_cast<int>(s_strPlaylistFullText.size() + 1);
+	}
+	s_strPlaylistFullText.clear();
 }
 #endif // !CLIENT_DLL
 
@@ -1752,6 +1801,9 @@ bool Playlists_Load(const char* pszPlaylist)
 	ThreadJoinServerJob();
 
 	const bool bResults = v_Playlists_Load(pszPlaylist);
+#if !defined(CLIENT_DLL)
+	Playlists_RestoreClientPatch(); // parsed without the S30 client section; clients get all of it
+#endif // !CLIENT_DLL
 	Playlists_SDKInit();
 
 	return bResults;

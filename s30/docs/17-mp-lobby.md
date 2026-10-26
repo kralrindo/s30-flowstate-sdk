@@ -56,3 +56,20 @@ Refuses while the workspace dedi runs. The S21 originals stay as `.s21`; the rep
 - Not run on the dedi yet (this build did not touch `build/`): install, then `+map mp_lobby` (or the `dev_default`
   playlist) and check the dedi reaches ready and the `prop_uvanim` entity is skipped silently.
 - `levels/mp_lobby.rson` stays the dedi's (`IsTestMap: false`); S30's copy is in its script rpak and was not compared.
+
+## Installed and running (2026-10-26)
+The S30 client reaches the S30 lobby menu on the dedi's `+map mp_lobby` (play tab, legend, training card).
+What it took, after the BSP:
+- **Playlists** (docs/18): `asset_pipeline/playlists_s30/install.ps1` puts S30's schedules, rotations and the
+  playlists they name after S30's patch marker. The dedi's own parser cannot read that section, so `server.dll`
+  parses only the text before the marker and sends the full text (`rtech/playlists/playlists.cpp`,
+  `Playlists_HideClientPatch` / `Playlists_RestoreClientPatch`).
+- **Model precaches**: `s30/tools/dedi_lobby_precache.py` writes every model the S30 lobby/menu client scripts
+  create, and the dedi's paks contain, into a generated block of the dedi's `MenuModels_Init` (11 models).
+- **Typed persistent defaults**: S30-only persistent vars the dedi's pdef lacks are read with their S30 type
+  (`s30/tools/pdef_missing_types.py` -> `src/core_s30/pdef_s30_missing_types.h`, 216 vars), so
+  `expect bool( GetPersistentVar( ... ) )` holds.
+- **Artifacts**: this workspace's dedi `mp/sh_artifacts.nut` has its artifact loadout-slot registration removed
+  (unlike the reference install; the reason is not recorded), and the lobby's loadout validation indexed the empty
+  arrays and shut the game down. The four functions that use those slots now return when nothing is registered
+  (original kept as `.s21`).

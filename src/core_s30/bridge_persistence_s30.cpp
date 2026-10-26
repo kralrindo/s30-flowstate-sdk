@@ -28,6 +28,7 @@
 #include <unordered_set>
 #include "thirdparty/detours/include/detours.h"
 #include "bridge_persistence_s30.h"
+#include "pdef_s30_missing_types.h"
 #include "console_s30.h"
 #include "s30_log.h"
 #include "s30_pattern.h"
@@ -56,6 +57,19 @@ static PersistRead_t v_GetVarAsInt = nullptr;
 static PersistRead_t v_GetVar = nullptr;
 static GetArg_t s_pfnGetArg = nullptr;
 static PushInt_t s_pfnPushInt = nullptr;
+
+// 0xC34750 pushes a read var by its type; its push calls give the other pushes.
+static const char* const s_pszPatternPushTyped =
+	"48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B D9 49 8B F8 48 8B 0D ?? ?? ?? ?? 8B F2 48 8B";
+static const int s_nPushBoolCall = 0x60;    // call 0xF65B30 (vm, bool)
+static const int s_nPushFloatCall = 0xC9;   // call 0x60EB30 (vm, float in xmm1)
+static const int s_nPushStringCall = 0x104; // call 0xF65910 (vm, chars, -1)
+typedef void (*PushBool_t)(void* v, int bValue);
+typedef void (*PushFloat_t)(void* v, float flValue);
+typedef void (*PushString_t)(void* v, const char* psz, int nLen);
+static PushBool_t s_pfnPushBool = nullptr;
+static PushFloat_t s_pfnPushFloat = nullptr;
+static PushString_t s_pfnPushString = nullptr;
 static void** s_ppIface = nullptr;
 static PersistLookup_t v_Lookup = nullptr;
 static volatile LONG s_bLookupHooked = 0;
@@ -139,11 +153,72 @@ static const char* Persistence_MissingArg(void* v)
 	return pfnLookup(pIface, pszName, &nHandle) ? nullptr : pszName;
 }
 
-static __int64 Persistence_ReadOrDefault(PersistRead_t pfnRead, void* v, __int64 a2, unsigned int nClient)
+// The S30 type of a var the dedi's pdef lacks (kPdefMissingTypes, array indices as
+// "[]"), or -1 when the generated table does not list it.
+static int Persistence_MissingType(const char* pszName)
+{
+	char szPath[512];
+	size_t n = 0;
+	for (const char* p = pszName; *p && n + 3 < sizeof(szPath); ++p)
+	{
+		szPath[n++] = *p;
+		if (*p == '[')
+		{
+			while (*p && *p != ']')
+				++p;
+			if (!*p)
+				break;
+			szPath[n++] = ']';
+		}
+	}
+	szPath[n] = '\0';
+	size_t lo = 0, hi = sizeof(kPdefMissingTypes) / sizeof(kPdefMissingTypes[0]);
+	while (lo < hi)
+	{
+		const size_t mid = (lo + hi) / 2;
+		const int c = strcmp(kPdefMissingTypes[mid].pszPath, szPath);
+		if (!c)
+			return kPdefMissingTypes[mid].nType;
+		if (c < 0)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return -1;
+}
+
+// GetPersistentVar pushes the var's own type (0xC34750): a script that expects a bool
+// stops on an int. AsInt always pushes an int.
+static __int64 Persistence_ReadOrDefault(PersistRead_t pfnRead, void* v, __int64 a2, unsigned int nClient, bool bTyped)
 {
 	const char* const pszName = Persistence_MissingArg(v);
 	if (!pszName || !s_pfnPushInt)
 		return pfnRead(v, a2, nClient);
+	const int nType = bTyped ? Persistence_MissingType(pszName) : 1;
+	switch (nType)
+	{
+	case 0:
+		if (!s_pfnPushBool)
+			break;
+		Persistence_NoteMissing(pszName, "read as false");
+		s_pfnPushBool(v, 0);
+		return 1;
+	case 2:
+		if (!s_pfnPushFloat)
+			break;
+		Persistence_NoteMissing(pszName, "read as 0.0");
+		s_pfnPushFloat(v, 0.0f);
+		return 1;
+	case 3:
+	case 4:
+		if (!s_pfnPushString)
+			break;
+		Persistence_NoteMissing(pszName, "read as \"\"");
+		s_pfnPushString(v, "", -1);
+		return 1;
+	default:
+		break;
+	}
 	Persistence_NoteMissing(pszName, "read as 0");
 	s_pfnPushInt(v, 0);
 	return 1;
@@ -151,12 +226,12 @@ static __int64 Persistence_ReadOrDefault(PersistRead_t pfnRead, void* v, __int64
 
 static __int64 h_GetVarAsInt(void* v, __int64 a2, unsigned int nClient)
 {
-	return Persistence_ReadOrDefault(v_GetVarAsInt, v, a2, nClient);
+	return Persistence_ReadOrDefault(v_GetVarAsInt, v, a2, nClient, false);
 }
 
 static __int64 h_GetVar(void* v, __int64 a2, unsigned int nClient)
 {
-	return Persistence_ReadOrDefault(v_GetVar, v, a2, nClient);
+	return Persistence_ReadOrDefault(v_GetVar, v, a2, nClient, true);
 }
 
 static void* Persistence_CallTarget(uint8_t* pCall)
@@ -203,6 +278,16 @@ bool S30Persistence_Install(void)
 	if (!bReads)
 		S30Log("[PDEF-MISSING] persistent var reads unresolved (AsInt %d, Var %d matches) -- missing vars read as script errors\n",
 			nMatchesAsInt, nMatchesVar);
+	int nMatchesPush = 0;
+	uint8_t* const pPushTyped = S30Pattern_FindUnique(s_pszPatternPushTyped, &nMatchesPush);
+	if (pPushTyped)
+	{
+		s_pfnPushBool = reinterpret_cast<PushBool_t>(Persistence_CallTarget(pPushTyped + s_nPushBoolCall));
+		s_pfnPushFloat = reinterpret_cast<PushFloat_t>(Persistence_CallTarget(pPushTyped + s_nPushFloatCall));
+		s_pfnPushString = reinterpret_cast<PushString_t>(Persistence_CallTarget(pPushTyped + s_nPushStringCall));
+	}
+	if (!s_pfnPushBool || !s_pfnPushFloat || !s_pfnPushString)
+		S30Log("[PDEF-MISSING] typed pushes unresolved (%d matches) -- missing bool/float/string vars read as int 0\n", nMatchesPush);
 
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
