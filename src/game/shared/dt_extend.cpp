@@ -15,6 +15,7 @@
 #include "public/tier0/memaddr.h"
 #include "thirdparty/detours/include/detours.h"
 #include "game/shared/dt_extend.h"
+#include "rtech/pak/string_table_grow.h" // kParticleEffectNamesSize
 #if defined(SDK_WIP)
 #include "game/server/portal/prop_portal.h"
 #endif // SDK_WIP
@@ -486,7 +487,9 @@ struct DTBitWidthOverride
 };
 // These props ship with SP_FLAGS == 0, i.e.
 // SIGNED, and the SIGN IS LOAD- BEARING: the S21 client keeps TWO particle index arrays and picks between them on the sign of the index -- positive is the networked ParticleEffectNames namespace, negative is client-local, indexed by ~idx.
-static constexpr int kEffectIndexBits = 13;
+// Derived from the table size (string_table_grow.h) so the wire width and the table cannot
+// disagree: 4096 entries took 13 bits, 8192 take 14.
+static constexpr int kEffectIndexBits = ParticleEffectIndexBits(kParticleEffectNamesSize);
 
 // DT_SoundData.m_networkTableID -- the sentinel width, not a capacity widening, and the reason every server sound was inaudible on the S21 client.
 // With miles_server_useSoundIDTable 0 the dedi does not put the Miles hash in the SoundIDs string table; it sends the full 64-bit hash in m_soundID and writes -1 into m_networkTableID to mean "no table row, use the hash".

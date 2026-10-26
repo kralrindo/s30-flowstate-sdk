@@ -28,10 +28,11 @@ static ConVar sdk_settings_assets_table_size("sdk_settings_assets_table_size",
 	"(default engine cap is 8192). Range [8192, 32768] -- must be a power "
 	"of 2 and fit in uint16 wire encoding.");
 
-// ParticleEffectNames table-only grow 2048->4096. Parallel structure stays 2048.
+// ParticleEffectNames grow 2048 -> kParticleEffectNamesSize (string_table_grow.h); the
+// networked index width follows it (dt_extend kEffectIndexBits).
 static ConVar sdk_particle_effect_table_grow("sdk_particle_effect_table_grow",
 	"1", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED,
-	"Grow ParticleEffectNames network string table 2048->4096. 1=grow, 0=stock 2048. Restart required.");
+	"Grow ParticleEffectNames network string table past the stock 2048 (to kParticleEffectNamesSize). 1=grow, 0=stock 2048. Restart required.");
 
 //-----------------------------------------------------------------------------
 // modelprecache sizing is owned by weapon_legendary_ext.cpp (table + model_t* array together).
@@ -95,7 +96,7 @@ void VStringTableGrow::Detour(const bool bAttach) const
 		"[string-table] SettingsAssets max entries patched: 0x%X -> 0x%X "
 		"(@ %p)\n", expected, newSize, pImm);
 
-	// ParticleEffectNames 0x800 -> 0x1000. Read +sdk_particle_effect_table_grow from the command line (this Detour runs before launch-cvar apply).
+	// ParticleEffectNames 0x800 -> kParticleEffectNamesSize. Read +sdk_particle_effect_table_grow from the command line (this Detour runs before launch-cvar apply).
 	bool growEnabled = sdk_particle_effect_table_grow.GetBool();
 	{
 		const char* pszVal = nullptr;
@@ -177,7 +178,7 @@ void VStringTableGrow::Detour(const bool bAttach) const
 			}
 			else
 			{
-				const uint32_t newPartSize = 0x1000u;
+				const uint32_t newPartSize = static_cast<uint32_t>(kParticleEffectNamesSize);
 				DWORD oldPartProt = 0;
 				if (!VirtualProtect(pPartImm, 4, PAGE_EXECUTE_READWRITE, &oldPartProt))
 				{
