@@ -131,17 +131,28 @@ static void PredTol_Apply(void)
 //     (C_Player), m_flTimeWeaponIdle (CWeaponX): the dedi acks 0 against the
 //     client's live value (measured; the S21 bridge masks the first two too).
 //     Taken only while the server's value is 0.
+//   S30-only fields: predicted fields whose name exists nowhere in the dedi
+//     (r5apex_ds.exe + server.dll; listed from the error-check blocks of
+//     C_Player, CWeaponX and CBaseViewModel). The dedi can never send them, so
+//     the server record keeps its default and every predicted change was an
+//     error -- m_weaponIsActivelyFiring and m_attackEventStartTime alone were
+//     1,050 of 1,528 errors while firing. Always the client's value.
+//   m_lastUCmdSimulationTicks: the tick half of the timeBase pair (see the
+//     tolerance above); one tick apart when the remainder wraps.
 //-----------------------------------------------------------------------------
 static const int CTX_RECORD0 = 0x10;
 static const int CTX_RECORD1 = 0x18;
 static const int CTX_INDEX0 = 0x20;
 static const int CTX_INDEX1 = 0x24;
 static const int TD_FLAT = 0x70;
+static const int TD_BYTES = 0x50; // the whole field
 
 enum ClientValueRule_t
 {
 	RULE_BIT7,        // predictableFlags: the client's bit 7 when it is the only difference
 	RULE_SERVER_ZERO, // the client's value while the server's is 0
+	RULE_CLIENT,      // always the client's value (S30-only fields)
+	RULE_ONE_TICK,    // the client's value when one apart
 };
 struct ClientValue_t
 {
@@ -156,6 +167,58 @@ static const ClientValue_t s_clientValues[] =
 	{ "C_Player", "m_lastSprintPressTime", RULE_SERVER_ZERO, 4 },
 	{ "C_Player", "m_currentFrameLocalPlayer.m_duckTransitionRemainderMsec", RULE_SERVER_ZERO, 4 },
 	{ "CWeaponX", "m_flTimeWeaponIdle", RULE_SERVER_ZERO, 4 },
+	{ "C_Player", "m_lastUCmdSimulationTicks", RULE_ONE_TICK, 4 },
+	// S30-only (absent from the dedi); size 0 = the field's own size (td +0x50).
+	{ "C_Player", "m_animAutoPlayBeginTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_sharedEnergyMax", RULE_CLIENT, 0 },
+	{ "C_Player", "m_wasClimbingIntoMantle", RULE_CLIENT, 0 },
+	{ "C_Player", "m_dodgedInAir", RULE_CLIENT, 0 },
+	{ "C_Player", "m_fastFalling", RULE_CLIENT, 0 },
+	{ "C_Player", "m_usedWallHighJump", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lastMantleBoostTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_resetDuckToggle", RULE_CLIENT, 0 },
+	{ "C_Player", "m_movementDisabledCount", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lerpToStartPos", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lerpToEndPos", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lerpToStartTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lerpToEndTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_prevMantleAngleOffset", RULE_CLIENT, 0 },
+	{ "C_Player", "m_jetDriveTargetEntZOffset", RULE_CLIENT, 0 },
+	{ "C_Player", "m_playerLaunchHangTimeEnd", RULE_CLIENT, 0 },
+	{ "C_Player", "m_playerLaunchHangTimeRequested", RULE_CLIENT, 0 },
+	{ "C_Player", "m_grappleSwingHoldTimeOrRemainingEdgeGrappleReelTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_fallSpeedGlideMultiplier", RULE_CLIENT, 0 },
+	{ "C_Player", "m_pilotModeActive", RULE_CLIENT, 0 },
+	{ "C_Player", "m_slideGateDebounceExpireTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_isHoverStrafed", RULE_CLIENT, 0 },
+	{ "C_Player", "m_hoverMeter", RULE_CLIENT, 0 },
+	{ "C_Player", "m_hoverRechargeDelayAccumulator", RULE_CLIENT, 0 },
+	{ "C_Player", "m_touchingSlipTriggersOrigin", RULE_CLIENT, 0 },
+	{ "C_Player", "m_touchingSlipTriggersDirection", RULE_CLIENT, 0 },
+	{ "C_Player", "m_touchingSlipTriggersSpeed", RULE_CLIENT, 0 },
+	{ "C_Player", "m_touchingSlipTriggersAcceleration", RULE_CLIENT, 0 },
+	{ "C_Player", "m_touchingSlipTriggersCount", RULE_CLIENT, 0 },
+	{ "C_Player", "m_lastJumpWasWallHighJump", RULE_CLIENT, 0 },
+	{ "C_Player", "m_chargeJumpStartTime", RULE_CLIENT, 0 },
+	{ "C_Player", "m_deviceForm", RULE_CLIENT, 0 },
+	{ "C_Player", "m_skywardWeaponsEnabled", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_animAutoPlayBeginTime", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_lastEnergizeState", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_fastHolsterScale", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_secondaryAttackRequested", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_chargeDebounce", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_chargeWithoutManualInputCancelled", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_lastEnergizeFrac", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_lastFullyCharged", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_scriptControlledModValues", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_scriptControlledModValuesMap", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_pendingModIndex", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_hasPendingMod", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_shouldPlaySprintAnims", RULE_CLIENT, 0 },
+	{ "CWeaponX", "m_weaponIsActivelyFiring", RULE_CLIENT, 0 },
+	{ "CBaseViewModel", "m_attackEventStartTime", RULE_CLIENT, 0 },
+	{ "CBaseViewModel", "m_eventSoundFadeStart", RULE_CLIENT, 0 },
+	{ "CBaseViewModel", "m_nextFidgetTime", RULE_CLIENT, 0 },
 };
 static const int kClientValues = sizeof(s_clientValues) / sizeof(s_clientValues[0]);
 static const uint32_t kPredictableFlagsClientBits = 0x80;
@@ -205,7 +268,7 @@ static const ClientValueCache_t* PredTol_Lookup(uint8_t* pMap, int nBlock, const
 void S30PredTol_BeforeErrorCheck(uint8_t* pCtx, uint8_t* pMap, int nBlock)
 {
 	const char* const pszClass = *reinterpret_cast<const char* const*>(pMap + DMAP_CLASSNAME);
-	if (!pszClass || (strcmp(pszClass, "C_Player") && strcmp(pszClass, "CWeaponX")))
+	if (!pszClass || (strcmp(pszClass, "C_Player") && strcmp(pszClass, "CWeaponX") && strcmp(pszClass, "CBaseViewModel")))
 		return;
 	const ClientValueCache_t* const pCache = PredTol_Lookup(pMap, nBlock, pszClass);
 	uint8_t* const pPredicted = *reinterpret_cast<uint8_t**>(pCtx + CTX_RECORD0);
@@ -222,7 +285,25 @@ void S30PredTol_BeforeErrorCheck(uint8_t* pCtx, uint8_t* pMap, int nBlock)
 		uint32_t* const pA = reinterpret_cast<uint32_t*>(pPredicted + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx0));
 		uint32_t* const pB = reinterpret_cast<uint32_t*>(pServer + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx1));
 		bool bTaken = false;
-		if (s_clientValues[k].eRule == RULE_BIT7)
+		if (s_clientValues[k].eRule == RULE_CLIENT)
+		{
+			const int nBytes = *reinterpret_cast<const int*>(pTd + TD_BYTES);
+			if (nBytes > 0 && nBytes <= 256 && memcmp(pA, pB, nBytes))
+			{
+				memcpy(pB, pA, nBytes);
+				bTaken = true;
+			}
+		}
+		else if (s_clientValues[k].eRule == RULE_ONE_TICK)
+		{
+			const int nDelta = static_cast<int>(*pA) - static_cast<int>(*pB);
+			if (nDelta == 1 || nDelta == -1)
+			{
+				*pB = *pA;
+				bTaken = true;
+			}
+		}
+		else if (s_clientValues[k].eRule == RULE_BIT7)
 		{
 			if ((*pA ^ *pB) == kPredictableFlagsClientBits)
 			{
