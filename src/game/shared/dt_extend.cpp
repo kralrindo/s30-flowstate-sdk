@@ -7443,11 +7443,10 @@ static void DTExtend_ApplyPFlagsSlots8()
 
 // Comprehensive model-index re-widen. s_bitWidthOverrides only enumerates the NATIVE tables that carry an independent 13b m_nModelIndex; but bridge-synthesized S21 classes (s_s21Classes: DT_TriggerCylinderHeavy/Networked, DT_TriggerSlipSphere, DT_LootGrabber, DT_EnvDecoy, DT_CarePackageInsightProp) carry their OWN 13b model- index SendProps the per-class list never named.
 // The shared DT_BaseEntity widen does not reach them (the synth/reparent chain points at independent copies), so the dedi packs 13 while the client decodes 14 -> bitstream drift -> ReadPropIdx over-run -> OOB -> dropped snapshot ([FLATN-SCAN] found 9 such props across 6 classes).
-static bool s_modelIndexRewidenApplied = false;
+// Idempotent (only ever widens): it runs again after the S21 deep-clone so the props that pass clones get the
+// same width.
 static void DTExtend_RewidenAllModelIndexProps()
 {
-	if (s_modelIndexRewidenApplied) return;
-	s_modelIndexRewidenApplied = true;
 
 	int widened = 0;
 	int skippedTables = 0;
@@ -7476,18 +7475,24 @@ static void DTExtend_RewidenAllModelIndexProps()
 			if (*reinterpret_cast<int*>(p + SP_TYPE) == 10) continue; // DataTable link
 			const char* nm = *reinterpret_cast<const char**>(p + SP_VARNAME);
 			if (ODP_StrLenSafe(nm, 96) < 0 || !strstr(nm, "ModelIndex")) continue;
+			// The proxy (0x34F780) sign-extends a 16-bit index into a SIGNED int prop: 14 bits hold
+			// -8192..8191, so an index past 8191 wrapped by 8192 into the brush models
+			// (mp_rr_desertlands_mu5: 8781 precached, loot rollers/drones/doors arrived as '*N').
+			// 15 signed bits cover -1 (no model) and the whole 16384-entry modelprecache table.
 			int* pnb = reinterpret_cast<int*>(p + SP_NBITS);
-			if (*pnb == 13)
+			const bool bUnsigned = (*reinterpret_cast<int*>(p + SP_FLAGS) & 1) != 0;
+			if (*reinterpret_cast<int*>(p + SP_TYPE) == 0 && *pnb >= 13 && *pnb < (bUnsigned ? 14 : 15))
 			{
-				*pnb = 14;
+				const int nOld = *pnb;
+				*pnb = bUnsigned ? 14 : 15;
 				++widened;
 				Msg(eDLL_T::ENGINE,
-					"[MDLIDX-REWIDEN] %s.%s nBits 13 -> 14\n", tn ? tn : "?", nm);
+					"[MDLIDX-REWIDEN] %s.%s nBits %d -> %d\n", tn ? tn : "?", nm, nOld, *pnb);
 			}
 		}
 	}
 	Msg(eDLL_T::ENGINE,
-		"[MDLIDX-REWIDEN] comprehensive pass: widened %d model-index SendProp(s) 13->14 "
+		"[MDLIDX-REWIDEN] comprehensive pass: widened %d model-index SendProp(s) to 15 bits (14 unsigned) "
 		"across %d cached tables\n", widened, s_cachedSendTableCount);
 	if (skippedTables > 0)
 		Warning(eDLL_T::ENGINE,
@@ -7496,11 +7501,9 @@ static void DTExtend_RewidenAllModelIndexProps()
 
 // Comprehensive effect-index re-widen -- the effect-index twin of the model-index pass above, added for the SAME reason it was needed there. s_bitWidthOverrides enumerates only DT_TEScriptParticleSystem +...OnEntity and ASSUMES...OnEntityWithPos (and any other carrier) inherits the m_effectIndex widen.
 // But the synth/reparent chain makes INDEPENDENT prop copies (exactly how the per-class model-index list missed 9 props), so an assumed-inherited m_effectIndex can still be 11b: the dedi then packs 11 while the 12b client decodes 12 -> bitstream drift, AND the index wraps (& 0x7FF) for the ~1600 ParticleEffectNames entries at idx >= 2048 (table holds 3682) -> wrong/garbage particle definition -> uninitialized collection control points -> the bangalore-tactical crash.
-static bool s_effectIndexRewidenApplied = false;
+// Idempotent (11 -> 12 only): runs again after the S21 deep-clone, like the model-index pass.
 static void DTExtend_RewidenAllEffectIndexProps()
 {
-	if (s_effectIndexRewidenApplied) return;
-	s_effectIndexRewidenApplied = true;
 
 	int widened = 0;
 	int skippedTables = 0;
@@ -9690,6 +9693,9 @@ static char Hook_SendTable_Init(void** tables, int count)
 		DTExtend_PostApplyS21Overrides(tables, count);
 		// The tables the deep-clone made (PLAYER_EXCLUSIVE_EXPANDED, in S21's layout).
 		SNDCS30_ReshapeSendTables(tables, count, true);
+		// The deep-clone's copies were taken before the index widens reached them.
+		DTExtend_RewidenAllModelIndexProps();
+		DTExtend_RewidenAllEffectIndexProps();
 
 // [PARENT-FIX-FINAL] the ONE authoritative global parentTable pass.
 // Every structural pass above (PostApplyS21Overrides / Relocate / Copy / InsertWrapper / Bracketize / Offhand / DeathField) memcpy's SendProps or clones foreign templates, leaving +0x08 pointing at a foreign table; the encoder then resolves structBase from a foreign class index (the changelevel pack memmove-AV class).

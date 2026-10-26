@@ -178,6 +178,11 @@ void S30Props_OnDecoder(uint8_t* pDecoder)
 		const char* const pszName = pSend ? *reinterpret_cast<const char* const*>(pSend + SP_NAME) : nullptr;
 		if (pszName && *reinterpret_cast<const int*>(pSend) == 1 && !strcmp(pszName, "m_animPlaybackRate"))
 			Props_FixPlaybackRate(pSend, pszTable ? pszTable : "?");
+		// A model index below 14 bits wraps the precache entries past 8191 (16384 on both sides).
+		if (pszName && *reinterpret_cast<const int*>(pSend) == 0 && strstr(pszName, "ModelIndex")
+			&& *reinterpret_cast<const int*>(pSend + SP_NBITS) < 14)
+			S30LogFile("[PROPS] %s.%s: model index sent in %d bits\n", pszTable ? pszTable : "?", pszName,
+				*reinterpret_cast<const int*>(pSend + SP_NBITS));
 	}
 }
 
