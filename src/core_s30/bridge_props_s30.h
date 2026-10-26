@@ -11,6 +11,9 @@
 // The adapter RecvProp for an unmatched SendProp of the root table, or nullptr
 // (then it goes on a dummy).
 uint8_t* S30Props_Adapter(const char* pszRootTable, const uint8_t* pSendProp);
+// A finished decoder (bridge_netchan h_DecoderDone): fixes the dedi's
+// m_animPlaybackRate copy that lost SPROP_ROUNDDOWN.
+void S30Props_OnDecoder(uint8_t* pDecoder);
 // After a snapshot was processed: weapon mod masks whose weapon had no name yet.
 void S30Props_OnSnapshot(void);
 

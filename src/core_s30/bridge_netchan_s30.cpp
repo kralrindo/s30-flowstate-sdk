@@ -579,6 +579,7 @@ static void h_DecoderDone(uint8_t* pDecoder)
 	{
 		__try
 		{
+			S30Props_OnDecoder(pDecoder);
 			S30AnimTrace_OnDecoder(pDecoder);
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)

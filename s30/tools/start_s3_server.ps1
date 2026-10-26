@@ -14,7 +14,7 @@ Get-CimInstance Win32_Process -Filter "Name='r5apex_ds.exe'" | Where-Object { $_
 Start-Sleep 1
 
 $args = "-dedicated -playlistFile `"playlists_r5_patch.txt`" -port $Port -devsdk -dev +sv_cheats 1 " +
-	"+sv_allowSendTableTransmitToClients 1 +stringtable_compress 1 +sdk_pak_load_flowstate 0 +launchplaylist $Playlist"
+	"+sv_allowSendTableTransmitToClients 1 +stringtable_compress 1 +sdk_pak_load_flowstate 0 +bridge_client_set s30 +launchplaylist $Playlist"
 $p = Start-Process -FilePath "$ServerDir\r5apex_ds.exe" -WorkingDirectory $ServerDir -ArgumentList $args -PassThru -WindowStyle Minimized
 "dedi pid $($p.Id) port $Port playlist $Playlist"
 Start-Sleep 5

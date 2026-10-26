@@ -126,6 +126,62 @@ static void Props_ModsCurrent(const uint8_t* pInfo, uint8_t* pStruct, void*) { P
 static void Props_ModsDisabled(const uint8_t* pInfo, uint8_t* pStruct, void*) { Props_WeaponMods(pInfo, pStruct, 0x17F0); }
 
 //-----------------------------------------------------------------------------
+// Playback rate encoding
+//
+// The dedi sends m_animPlaybackRate as a 10-bit float over [0, 128]; with
+// SPROP_ROUNDDOWN (0x8) its top is 127.875, a 0.125 step, and 1.0 is exact (8).
+// One of its copies has no ROUNDDOWN and a 128.0 top: 1.0 still goes out as 8, but
+// decodes as 128 * 8 / 1023 = 1.00098. S30 sets the viewmodel's rate every
+// predicted tick while sprinting and re-anchors the animation when the rate it is
+// given differs from the current one; every snapshot restored 1.00098 against the
+// predicted 1.0, so the sprint animation re-anchored each tick with a stale start
+// cycle and replayed its first frames. The client's copy of that prop decodes on
+// the 0.125 grid the other copies use.
+//-----------------------------------------------------------------------------
+static const int SP_NBITS = 0x04;
+static const int SP_LOW = 0x10;
+static const int SP_HIGH = 0x14;
+static const int SP_FLAGS = 0x58;
+
+static void Props_FixPlaybackRate(uint8_t* pSend, const char* pszTable)
+{
+	const int nBits = *reinterpret_cast<const int*>(pSend + SP_NBITS);
+	const float flLow = *reinterpret_cast<const float*>(pSend + SP_LOW);
+	float& flHigh = *reinterpret_cast<float*>(pSend + SP_HIGH);
+	const int nFlags = *reinterpret_cast<const int*>(pSend + SP_FLAGS);
+	static uint8_t* s_pLogged[64];
+	static int s_nLogged = 0;
+	bool bLogged = false;
+	for (int i = 0; i < s_nLogged; ++i)
+		bLogged |= s_pLogged[i] == pSend;
+	if (!bLogged && s_nLogged < 64)
+	{
+		s_pLogged[s_nLogged++] = pSend;
+		S30LogFile("[PROPS] %s m_animPlaybackRate send prop %p: %d bits [%g, %g] flags 0x%X%s\n", pszTable, pSend,
+			nBits, flLow, flHigh, nFlags, nBits == 10 && flLow == 0.0f && flHigh == 128.0f ? " -> top 127.875" : "");
+	}
+	if (nBits == 10 && flLow == 0.0f && flHigh == 128.0f)
+		flHigh = 127.875f;
+}
+
+void S30Props_OnDecoder(uint8_t* pDecoder)
+{
+	uint8_t* const* const ppSend = *reinterpret_cast<uint8_t* const* const*>(pDecoder + 0x18);
+	const uint8_t* const pRoot = *reinterpret_cast<uint8_t* const*>(pDecoder);
+	const int nProps = *reinterpret_cast<const int*>(pDecoder + 0x4098);
+	if (!ppSend || !pRoot)
+		return;
+	const char* const pszTable = *reinterpret_cast<const char* const*>(pRoot + 0x4C8);
+	for (int i = 0; i < nProps; ++i)
+	{
+		uint8_t* const pSend = ppSend[i];
+		const char* const pszName = pSend ? *reinterpret_cast<const char* const*>(pSend + SP_NAME) : nullptr;
+		if (pszName && *reinterpret_cast<const int*>(pSend) == 1 && !strcmp(pszName, "m_animPlaybackRate"))
+			Props_FixPlaybackRate(pSend, pszTable ? pszTable : "?");
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Animation event resets
 //-----------------------------------------------------------------------------
 struct ResetParity_t
