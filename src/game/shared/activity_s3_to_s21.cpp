@@ -64,6 +64,19 @@ bool Bridge_ClientIsS30(void)
 	return V_stricmp(bridge_client_set.GetString(), "s30") == 0;
 }
 
+int Bridge_ClientActivityByName(const char* pszName)
+{
+	if (!pszName)
+		return -1;
+	const bool bS30 = Bridge_ClientIsS30();
+	const S21ActivityEntry* const pTable = bS30 ? kS30Activities : kS21Activities;
+	const int nCount = bS30 ? kS30ActivityCount : kS21ActivityCount;
+	for (int i = 0; i < nCount; ++i)
+		if (!strcmp(pTable[i].name, pszName))
+			return pTable[i].id;
+	return -1;
+}
+
 static inline int Activity_Unmapped(const int id)
 {
 	if (id <= 0)

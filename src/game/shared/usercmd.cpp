@@ -11,6 +11,7 @@
 #include "game/shared/in_buttons.h"
 #include "game/shared/weapon_types.h"
 #include "game/shared/shared_activity.h"
+#include "game/shared/activity_s3_to_s21.h"
 
 ConVar usercmd_frametime_max("usercmd_frametime_max", "0.100"   , FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "The largest amount of simulation seconds a UserCmd can have." );
 ConVar usercmd_frametime_min("usercmd_frametime_min", "0.002857", FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "The smallest amount of simulation seconds a UserCmd can have.");
@@ -127,6 +128,7 @@ void VUserCmd::Detour(const bool bAttach) const
 #include "game/shared/in_buttons.h"
 #include "game/shared/weapon_types.h"
 #include "game/shared/shared_activity.h"
+#include "game/shared/activity_s3_to_s21.h"
 
 ConVar usercmd_frametime_max("usercmd_frametime_max", "0.100"   , FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "The largest amount of simulation seconds a UserCmd can have." );
 ConVar usercmd_frametime_min("usercmd_frametime_min", "0.002857", FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "The smallest amount of simulation seconds a UserCmd can have.");
@@ -163,10 +165,10 @@ void ClampUserCmd(CUserCmd* ucmd)
 	ucmd->viewangles.Normalize();
 	ucmd->pitchangles.Normalize();
 
-	// Only S21 inspect (564) passes when cheats are off. 557 is S21
-	// COOLDOWN_OVERHEAT_LATE1 on the wire; clamp runs before c2s xlat.
-	static const int kS21_ACT_VM_WEAPON_INSPECT = 564;
-	if (!sv_cheats->GetBool() && ucmd->weaponactivity != kS21_ACT_VM_WEAPON_INSPECT)
+	// Only the client's inspect passes when cheats are off: in the numbering of the
+	// client build served (S21 564, S30.1 562; c2s xlat runs after this clamp).
+	static const int s_nClientInspect = Bridge_ClientActivityByName("ACT_VM_WEAPON_INSPECT");
+	if (!sv_cheats->GetBool() && ucmd->weaponactivity != s_nClientInspect)
 		ucmd->weaponactivity = ACT_NONE;
 
 	// On the client, the frame time must be within 'usercmd_frametime_min'
