@@ -39,6 +39,8 @@
 #include "bridge_hud_s30.h"
 #include "bridge_props_s30.h"
 #include "bridge_animtrace_s30.h"
+#include "bridge_predcensus_s30.h"
+#include "bridge_predtol_s30.h"
 #include "engine/client/net_bridge_skip.h" // engine-free S3 message body widths
 #include "concommand_s30.h"
 #include "console_s30.h"
@@ -581,6 +583,7 @@ static void h_DecoderDone(uint8_t* pDecoder)
 		{
 			S30Props_OnDecoder(pDecoder);
 			S30AnimTrace_OnDecoder(pDecoder);
+			S30PredCensus_OnDecoder(pDecoder);
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
@@ -1575,6 +1578,7 @@ static bool Netchan_OnSnapshot(uint8_t* pChan, S30BitReader_t& r)
 		s_nAckTick = static_cast<int>(nTick1);
 		ReleaseSRWLockExclusive(&s_lock);
 		S30Props_OnSnapshot();
+		S30PredTol_OnSnapshot();
 		S30ScriptRemote_OnSnapshot(nTick1);
 	}
 	return true; // the payload is consumed either way: the stream stays aligned

@@ -71,7 +71,8 @@ struct TracedEntity_t
 static TracedEntity_t s_entities[32];
 static int s_nEntities = 0;
 static SRWLOCK s_lock = SRWLOCK_INIT;
-static volatile LONG s_bEnabled = 1;
+// Off by default: the frame sampler reads entities a map change frees (sdk_anim1p 1 to trace).
+static volatile LONG s_bEnabled = 0;
 static volatile LONG s_nLines = 0;
 static const LONG kMaxLines = 60000;
 
