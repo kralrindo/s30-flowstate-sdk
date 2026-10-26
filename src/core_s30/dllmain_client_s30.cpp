@@ -37,6 +37,8 @@
 #include "bridge_noclip_s30.h"
 #include "bridge_guards_s30.h"
 #include "bridge_netvars_s30.h"
+#include "devmode_s30.h"
+#include "scripts_disk_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -92,6 +94,7 @@ static DWORD WINAPI BootWatch_Thread(LPVOID)
 		{
 			s_bEngineCommandsDone = true;
 			S30ConCommand_RegisterSdkCommands();
+			S30DevMode_RegisterConVars();
 			S30ConCommand_WrapConnect();
 		}
 		if (nSec <= 10 || nSec % 10 == 0)
@@ -127,6 +130,8 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30Log("[S30] host build %s\n", pImage->pszBuild);
 	S30Log("[S30] cmdline: %s\n", GetCommandLineA());
 	S30Crash_Install();
+	S30DevMode_Install();
+	S30ScriptsDisk_Install();
 
 	if (!S30NetGuard_Install())
 		return false;

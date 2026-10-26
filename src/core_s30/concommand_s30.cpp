@@ -21,6 +21,7 @@
 //=============================================================================//
 #include <windows.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include "s30_log.h"
 #include "s30_pattern.h"
@@ -303,4 +304,105 @@ int S30ConCommand_RegisterSdkCommands(void)
 	if (nRegistered)
 		S30Log("[CVAR] registered %d SDK commands with the engine\n", nRegistered);
 	return nRegistered;
+}
+
+// ConVar (0x90), from the inlined constructor of the static "developer" (0x7E5D0):
+// the ConCommandBase above, IConVar vtable +0x30, parent +0x38 (itself), default
+// +0x40, value string +0x48 (a g_pMemAlloc buffer, as the engine reallocates it on
+// a longer value), its size +0x50, float +0x58, int +0x5C, min/max +0x60..+0x6F,
+// change callbacks +0x70 (CUtlVector, zero is empty). Both vtables are copied from
+// the live "developer".
+static const int s_nConVarSize = 0x90;
+static const int s_nOffConVarVtable = 0x30;
+static const int s_nOffConVarParent = 0x38;
+static const int s_nOffConVarDefault = 0x40;
+static const int s_nOffConVarString = 0x48;
+static const int s_nOffConVarStringSize = 0x50;
+static const int s_nOffConVarFloat = 0x58;
+static const int s_nOffConVarInt = 0x5C;
+
+// mov rax, [g_pMemAlloc] / test / jnz / call CreateGlobalMemAlloc / mov [g_pMemAlloc], rax
+// (inlined at every allocation; all sites name the same pair).
+static const char* const s_pszPatternMemAlloc = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? E8 ?? ?? ?? ?? 48 89 05";
+
+static const int s_nMaxEngineConVars = 32;
+static uint8_t s_engineConVars[s_nMaxEngineConVars][s_nConVarSize];
+static int s_nEngineConVars = 0;
+
+typedef void* (*CreateGlobalMemAlloc_t)(void);
+typedef void* (*MemAlloc_Alloc_t)(void* pAlloc, size_t nSize);
+
+static void* ConCommand_MemAlloc(void)
+{
+	static void** s_ppAlloc = nullptr;
+	static CreateGlobalMemAlloc_t s_pfnCreate = nullptr;
+	if (!s_ppAlloc)
+	{
+		uint8_t* pSites[8];
+		const int nSites = S30Pattern_FindAll(s_pszPatternMemAlloc, pSites, 8);
+		for (int i = 0; i < nSites; ++i)
+		{
+			int32_t nGlobal = 0, nCall = 0;
+			memcpy(&nGlobal, pSites[i] + 3, sizeof(nGlobal));
+			memcpy(&nCall, pSites[i] + 13, sizeof(nCall));
+			void** const ppAlloc = reinterpret_cast<void**>(pSites[i] + 7 + nGlobal);
+			const auto pfnCreate = reinterpret_cast<CreateGlobalMemAlloc_t>(pSites[i] + 17 + nCall);
+			if (i && (ppAlloc != s_ppAlloc || pfnCreate != s_pfnCreate))
+			{
+				S30Log("[CVAR] g_pMemAlloc sites disagree -- no engine convars\n");
+				s_ppAlloc = nullptr;
+				return nullptr;
+			}
+			s_ppAlloc = ppAlloc;
+			s_pfnCreate = pfnCreate;
+		}
+		if (!s_ppAlloc)
+			return nullptr;
+	}
+	return *s_ppAlloc ? *s_ppAlloc : s_pfnCreate();
+}
+
+bool S30ConCommand_RegisterConVar(const char* pszName, const char* pszDefault, const char* pszHelp)
+{
+	void* const pCvar = ConCommand_Cvar();
+	if (s_nEngineConVars >= s_nMaxEngineConVars || !pCvar)
+		return false;
+	if (S30ConCommand_FindCommandBase(pszName))
+		return false;
+	const uint8_t* const pTemplate = static_cast<const uint8_t*>(S30ConCommand_FindCommandBase("developer"));
+	void* const pAlloc = ConCommand_MemAlloc();
+	if (!pTemplate || !pAlloc)
+	{
+		S30Log("[CVAR] %s: template convar or g_pMemAlloc unresolved\n", pszName);
+		return false;
+	}
+	const size_t nSize = strlen(pszDefault) + 1;
+	char* const pszValue = static_cast<char*>(reinterpret_cast<MemAlloc_Alloc_t>(ConCommand_VFunc(pAlloc, 1))(pAlloc, nSize));
+	if (!pszValue)
+		return false;
+	memcpy(pszValue, pszDefault, nSize);
+
+	uint8_t* const pObject = s_engineConVars[s_nEngineConVars];
+	memset(pObject, 0, s_nConVarSize);
+	memcpy(pObject, pTemplate, sizeof(void*));
+	memcpy(pObject + s_nOffConVarVtable, pTemplate + s_nOffConVarVtable, sizeof(void*));
+	*reinterpret_cast<const char**>(pObject + s_nOffName) = pszName;
+	*reinterpret_cast<const char**>(pObject + s_nOffHelp) = pszHelp;
+	*reinterpret_cast<int*>(pObject + s_nOffFlags) = FCVAR_RELEASE | FCVAR_CLIENTDLL;
+	*reinterpret_cast<uint8_t**>(pObject + s_nOffConVarParent) = pObject;
+	*reinterpret_cast<const char**>(pObject + s_nOffConVarDefault) = pszDefault;
+	*reinterpret_cast<char**>(pObject + s_nOffConVarString) = pszValue;
+	*reinterpret_cast<size_t*>(pObject + s_nOffConVarStringSize) = nSize;
+	const float flValue = static_cast<float>(atof(pszDefault));
+	*reinterpret_cast<float*>(pObject + s_nOffConVarFloat) = flValue;
+	*reinterpret_cast<int*>(pObject + s_nOffConVarInt) = static_cast<int>(flValue);
+
+	reinterpret_cast<RegisterConCommand_t>(ConCommand_VFunc(pCvar, 9))(pCvar, pObject);
+	if (!(pObject[s_nOffRegistered] & 1))
+	{
+		S30Log("[CVAR] RegisterConCommand did not take convar %s\n", pszName);
+		return false;
+	}
+	++s_nEngineConVars;
+	return true;
 }

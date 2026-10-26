@@ -1,0 +1,63 @@
+// Dev-only natives the retail S30.1 client does not register; the #if DEV script code calls them.
+// Loaded first in the CLIENT and UI lists under DEV (s30/tools/merge_s30_scripts.py).
+// UpdateOVAssetUI takes arrays of two element types, which no stub signature accepts: its calls
+// are commented out by the merge instead (as S21 did).
+
+#if DEV
+global function AddNetPanelText
+global function DevMenu_Alias_DEV
+global function DevMenu_Rm_DEV
+global function WarpMouseCursorDEV
+#if CLIENT
+global function OVSetCurrentWeaponClassname
+global function OVPostModelUpdate
+global function InitOutsourceUI_EnvironmentNodes
+global function CreateOVClientSideEntity
+
+// The art viewer's code property ids; only its own UpdateOVAssetUI / callback switch use them.
+global const int ARTVIEWER_PROPERTIES_ASSETTYPE = 0
+global const int ARTVIEWER_PROPERTIES_ASSET = 1
+global const int ARTVIEWER_PROPERTIES_SKIN = 2
+global const int ARTVIEWER_PROPERTIES_CHARM = 3
+global const int ARTVIEWER_PROPERTIES_WORLDMODEL = 4
+#endif
+
+// Net panel diagnostics text (ui/_menus.nut AddNetPanelDiagnostics).
+void function AddNetPanelText( string text )
+{
+}
+
+// Code dev menu mirror of the script DEV menu (ui/menu_dev.nut); the script menu works without it.
+void function DevMenu_Alias_DEV( string alias, string command )
+{
+}
+
+void function DevMenu_Rm_DEV( string alias )
+{
+}
+
+// Mouse warp for the quick inventory dev path (ui/panel_survival_quick_inventory_v2.nut).
+void function WarpMouseCursorDEV( vector pos )
+{
+}
+
+#if CLIENT
+// Outsource art viewer (client/_cl_outsource_tool.nut): its code UI panel is not in retail.
+void function OVSetCurrentWeaponClassname( string classname )
+{
+}
+
+void function OVPostModelUpdate()
+{
+}
+
+void function InitOutsourceUI_EnvironmentNodes( array<string> nodeNames )
+{
+}
+
+entity function CreateOVClientSideEntity( vector origin, vector angles, asset modelName )
+{
+	return CreateClientSidePropDynamic( origin, angles, modelName )
+}
+#endif
+#endif

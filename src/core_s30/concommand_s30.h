@@ -14,6 +14,10 @@ bool S30ConCommand_IsReady(void);
 // binds, cfg files and the engine console see them. Idempotent; returns the
 // number registered by this call.
 int S30ConCommand_RegisterSdkCommands(void);
+// Registers a client ConVar the engine lacks (FCVAR_RELEASE | FCVAR_CLIENTDLL), built
+// like the engine's static ones. The strings must outlive the process. False when the
+// name exists or the layout is unresolved.
+bool S30ConCommand_RegisterConVar(const char* pszName, const char* pszDefault, const char* pszHelp);
 // Routes the engine's `connect <host[:port]>` through the S3 bridge handshake.
 bool S30ConCommand_WrapConnect(void);
 
