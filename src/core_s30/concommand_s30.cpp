@@ -26,6 +26,7 @@
 #include "s30_pattern.h"
 #include "sdk_commands_s30.h"
 #include "concommand_s30.h"
+#include "bridge_handshake_s30.h"
 
 static const int FCVAR_DEVELOPMENTONLY = 1 << 1;
 static const int FCVAR_CLIENTDLL = 1 << 3;
@@ -234,6 +235,55 @@ static bool ConCommand_RegisterOne(const char* pszName, const char* pszHelp)
 		return false;
 	}
 	++s_nEngineCommands;
+	return true;
+}
+
+// The engine's `connect` routed through the bridge, as the S21 client's
+// Hook_Connect_Worker does: `connect <host[:port]>` runs the S3 handshake, which
+// then hands the connection to the engine with its own `connect` (passed through).
+typedef void (*CommandCallback_t)(const uint8_t* pCommand);
+static CommandCallback_t s_pfnEngineConnect = nullptr;
+
+static void ConCommand_Connect(const uint8_t* pCommand)
+{
+	// The handler (0x2F0EF0) reads the text after the command name, not argc/argv
+	// (argc is -1 here): args string +0x10, offset by argv0's size (+8).
+	const long long nArgv0Size = *reinterpret_cast<const long long*>(pCommand + s_nCCommandOffArgv0Size);
+	const char* pszArg = nArgv0Size > 0 && nArgv0Size < 512
+		? reinterpret_cast<const char*>(pCommand + s_nCCommandOffArgS) + nArgv0Size : "";
+	while (*pszArg == ' ' || *pszArg == '\t')
+		++pszArg;
+	char szAddress[256];
+	size_t n = 0;
+	while (pszArg[n] && pszArg[n] != ' ' && pszArg[n] != '\t' && n + 1 < sizeof(szAddress))
+	{
+		szAddress[n] = pszArg[n];
+		++n;
+	}
+	szAddress[n] = '\0';
+	if (S30Bridge_TakeInternalConnect() || !szAddress[0])
+	{
+		s_pfnEngineConnect(pCommand);
+		return;
+	}
+	S30Log("[CVAR] connect %s -> S3 bridge handshake\n", szAddress);
+	S30Bridge_Connect(szAddress);
+}
+
+bool S30ConCommand_WrapConnect(void)
+{
+	uint8_t* const pCommand = static_cast<uint8_t*>(S30ConCommand_FindCommandBase("connect"));
+	if (!pCommand || pCommand[s_nOffCallbackKind] != 2 || !*reinterpret_cast<void**>(pCommand + s_nOffCallback))
+	{
+		S30Log("[CVAR] engine connect not wrapped (%s) -- use bridge_connect\n", pCommand ? "callback kind" : "not found");
+		return false;
+	}
+	if (s_pfnEngineConnect)
+		return true;
+	s_pfnEngineConnect = *reinterpret_cast<CommandCallback_t*>(pCommand + s_nOffCallback);
+	*reinterpret_cast<void**>(pCommand + s_nOffCallback) = reinterpret_cast<void*>(&ConCommand_Connect);
+	S30Log("[CVAR] engine connect (callback 0x%llX) routed through the S3 bridge\n",
+		static_cast<unsigned long long>(S30Pattern_Rva(reinterpret_cast<void*>(s_pfnEngineConnect))));
 	return true;
 }
 

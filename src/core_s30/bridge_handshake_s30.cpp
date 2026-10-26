@@ -317,12 +317,30 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 	return 0;
 }
 
+// The engine `connect` the bridge itself queues after the handshake: the wrapped
+// engine command lets these through (S30Bridge_TakeInternalConnect).
+static volatile LONG s_nInternalConnects = 0;
+
+bool S30Bridge_TakeInternalConnect(void)
+{
+	LONG n = s_nInternalConnects;
+	while (n > 0)
+	{
+		const LONG nSeen = InterlockedCompareExchange(&s_nInternalConnects, n - 1, n);
+		if (nSeen == n)
+			return true;
+		n = nSeen;
+	}
+	return false;
+}
+
 bool S30Bridge_Connect(const char* pszHostPort)
 {
+	// A new connect replaces a live or half-done bridge (S21 Hook_Connect_Worker).
 	if (s_eStage != static_cast<LONG>(BridgeStage_t::IDLE))
 	{
-		S30Log("[BRIDGE] already %s -- bridge_disconnect first\n", S30Bridge_StateName());
-		return false;
+		S30Log("[BRIDGE] %s -- tearing it down for the new connect\n", S30Bridge_StateName());
+		S30Bridge_Disconnect();
 	}
 
 	char szHost[128];
@@ -335,9 +353,30 @@ bool S30Bridge_Connect(const char* pszHostPort)
 		*pszColon = '\0';
 	}
 	sockaddr_in addr4 = {};
-	if (inet_pton(AF_INET, szHost, &addr4.sin_addr) != 1 || nPort <= 0 || nPort > 65535)
+	if (!_stricmp(szHost, "localhost"))
+		strcpy_s(szHost, "127.0.0.1");
+	if (inet_pton(AF_INET, szHost, &addr4.sin_addr) != 1)
 	{
-		S30Log("[BRIDGE] cannot parse '%s' (want ipv4:port)\n", pszHostPort);
+		// A host name: its IPv4 address (the network guard decides what may resolve).
+		addrinfo hints = {};
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_DGRAM;
+		addrinfo* pResult = nullptr;
+		if (getaddrinfo(szHost, nullptr, &hints, &pResult) == 0 && pResult)
+		{
+			addr4.sin_addr = reinterpret_cast<const sockaddr_in*>(pResult->ai_addr)->sin_addr;
+			inet_ntop(AF_INET, &addr4.sin_addr, szHost, sizeof(szHost));
+			freeaddrinfo(pResult);
+		}
+		else
+		{
+			S30Log("[BRIDGE] cannot resolve '%s'\n", szHost);
+			return false;
+		}
+	}
+	if (nPort <= 0 || nPort > 65535)
+	{
+		S30Log("[BRIDGE] cannot parse '%s' (want host:port)\n", pszHostPort);
 		return false;
 	}
 	memset(&s_dest, 0, sizeof(s_dest));
@@ -385,8 +424,12 @@ bool S30Bridge_Connect(const char* pszHostPort)
 	char szConnect[192];
 	snprintf(szConnect, sizeof(szConnect),
 		"net_usesocketsforloopback 1; cl_strict_transport_checks 0; connect %s:%d", szHost, nPort);
+	InterlockedIncrement(&s_nInternalConnects);
 	if (!S30Console_SendToEngine(szConnect))
+	{
+		InterlockedDecrement(&s_nInternalConnects);
 		S30Log("[BRIDGE] Cbuf_AddText unresolved -- native connect not started\n");
+	}
 
 	uint8_t challenge[21];
 	challenge[0] = challenge[1] = challenge[2] = challenge[3] = 0xFF;

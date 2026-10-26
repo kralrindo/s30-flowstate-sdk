@@ -86,6 +86,7 @@ static DWORD WINAPI BootWatch_Thread(LPVOID)
 		{
 			s_bEngineCommandsDone = true;
 			S30ConCommand_RegisterSdkCommands();
+			S30ConCommand_WrapConnect();
 		}
 		if (nSec <= 10 || nSec % 10 == 0)
 		{

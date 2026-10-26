@@ -11,6 +11,8 @@
 // own socket. Returns false if a handshake is already running or the address
 // does not parse.
 bool S30Bridge_Connect(const char* pszHostPort);
+// True (once) for each engine `connect` the bridge queued itself after its handshake.
+bool S30Bridge_TakeInternalConnect(void);
 void S30Bridge_Disconnect(void);
 // One-line state for sdk_status / the overlay.
 const char* S30Bridge_StateName(void);

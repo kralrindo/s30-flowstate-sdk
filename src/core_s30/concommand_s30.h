@@ -14,6 +14,8 @@ bool S30ConCommand_IsReady(void);
 // binds, cfg files and the engine console see them. Idempotent; returns the
 // number registered by this call.
 int S30ConCommand_RegisterSdkCommands(void);
+// Routes the engine's `connect <host[:port]>` through the S3 bridge handshake.
+bool S30ConCommand_WrapConnect(void);
 
 // ICvar lookups (null when not found or not ready).
 void* S30ConCommand_FindCommandBase(const char* pszName);
