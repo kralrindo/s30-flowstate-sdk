@@ -266,6 +266,8 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 				if (n <= 5)
 					S30Log("[BRIDGE] malformed DataBlock fragment (%d bytes, #%ld)\n", nRecv, n);
 			}
+			if (S30DataBlock_TakeWake())
+				S30Netchan_WakeForDataBlock();
 		}
 		else if (bOob && s_buf[4] == 0x4A)
 		{
@@ -283,6 +285,17 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 			// Netchannel traffic from the dedi: to the engine socket, where the
 			// ProcessPacket detour (bridge_netchan) parses it.
 			const LONG nCount = InterlockedIncrement(&s_nNetchanPackets);
+			// Split fragment: [-2][32 request][8 count][8 number][16 split size][payload];
+			// the engine reassembles it (NET_ReceiveSplit 0x2A5650, split size 564..1188).
+			if (nRecv >= 12 && *reinterpret_cast<const uint32_t*>(s_buf) == 0xFFFFFFFEu)
+			{
+				static volatile LONG s_nSplitFragments = 0;
+				const LONG n = InterlockedIncrement(&s_nSplitFragments);
+				if (n <= 8 || n % 500 == 0)
+					S30Log("[BRIDGE] split fragment #%ld: request %d, %u/%u, split size %d, %d bytes\n", n,
+						*reinterpret_cast<const int32_t*>(s_buf + 4), s_buf[9], s_buf[8],
+						*reinterpret_cast<const int16_t*>(s_buf + 10), nRecv);
+			}
 			if (!S30Signon_QueueForEngine(s_buf, nRecv) && nCount <= 20)
 				S30Log("[BRIDGE] netchan packet #%ld (%d bytes) not queued for the engine\n", nCount, nRecv);
 		}

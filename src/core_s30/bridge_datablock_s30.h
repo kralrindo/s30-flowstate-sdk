@@ -27,5 +27,8 @@ const uint8_t* S30DataBlock_GetSignon(int* pnSize, int* pnTransferNr);
 // Hands each completed transfer to the caller once (a malloc'd copy, 16 zero
 // bytes past the end; the caller frees it); null if none is pending.
 uint8_t* S30DataBlock_TakeSignon(int* pnSize, int* pnTransferNr);
+// True once per completed transfer: the engine thread has to be woken for it
+// (the dedi sends no netchannel packet while it waits for the FULL snapshot's ack).
+bool S30DataBlock_TakeWake(void);
 
 #endif // CORE_S30_BRIDGE_DATABLOCK_H

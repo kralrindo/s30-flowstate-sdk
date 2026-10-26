@@ -29,6 +29,20 @@ void S30Netchan_OnConnAccept(void);
 void S30Netchan_Pump(void);
 // The engine sent a datagram to the dedi (dropped): flush C2S, rate-limited.
 void S30Netchan_OnEngineSend(void);
+// A DataBlock transfer completed: queue a wake datagram for the engine socket so
+// it is dispatched on the engine thread without waiting for a netchannel packet.
+void S30Netchan_WakeForDataBlock(void);
+// The dedi's tick interval from ServerInfo (0 until it arrived).
+float S30Netchan_TickInterval(void);
+// An S3 clc_Move message (7-bit type included) for the next C2S packet; flushes now.
+bool S30Netchan_QueueMove(const uint8_t* pBits, int nBits);
+
+// A relayed client message (7-bit S3 type included) sent nSends times, nSpacingMs
+// apart, in the next C2S packets; flushes now. False when the queue is full.
+bool S30Netchan_QueueC2S(const uint8_t* pBits, int nBits, int nSends, int nSpacingMs);
+
+// An S30 bf_read (S30BfRead::SIZE bytes at pBf) over pData, at bit 0.
+void S30Netchan_BfInit(uint8_t* pBf, const uint8_t* pData, int nBytes);
 
 // sdk_netchan
 void S30Netchan_PrintStatus(void);

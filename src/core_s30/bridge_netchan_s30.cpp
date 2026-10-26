@@ -33,6 +33,10 @@
 #include "bridge_signon_s30.h"
 #include "bridge_datablock_s30.h"
 #include "bridge_bits_s30.h"
+#include "bridge_scriptremote_s30.h"
+#include "bridge_usermessage_s30.h"
+#include "bridge_c2s_s30.h"
+#include "bridge_hud_s30.h"
 #include "engine/client/net_bridge_skip.h" // engine-free S3 message body widths
 #include "concommand_s30.h"
 #include "console_s30.h"
@@ -81,6 +85,18 @@ static const char* const s_pszPatternRecvTableWalk =
 static const uint16_t* s_pRecvTableHead = nullptr;
 static uint8_t* const* s_ppRecvTableList = nullptr;
 static const int RT_NAME = 0x4C8;
+// RecvTable (0x500 bytes): RecvProp** +8, count +0x10, child DTs +0x18 (count
+// +0x4B8), decoder +0x4C0, name +0x4C8, initialized +0x4D0, in main list +0x4D1.
+static const int RT_SIZE = 0x500;
+static const int RT_INITIALIZED = 0x4D0;
+static const int RT_IN_MAIN_LIST = 0x4D1;
+// That list's CUtlLinkedList::InsertBefore (0x2639D0; five template copies share
+// the prologue, this one loads the list pointer at +0x3C).
+static const char* const s_pszPatternListInsert =
+	"48 89 5C 24 08 57 48 83 EC 20 49 8B F8 0F B7 DA E8 ?? ?? ?? ?? 44 0F B7 C8 41 BB FF FF 00 00 66 45 3B CB 75 0F";
+static const int s_nListInsertListLoad = 0x3C;
+typedef uint16_t (*RecvTableListInsert_t)(void* pList, uint16_t nBefore, void* const* ppElement);
+static RecvTableListInsert_t v_RecvTableListInsert = nullptr;
 
 // CL_ParseClassInfo_EndClasses (0x2FDB60, this = handler): server classes at
 // +0x460 (32 bytes: ClientClass* +0, name +8, datatable +16), count +0x468; each
@@ -108,6 +124,41 @@ static const char* const s_pszPatternMatchProps =
 	"48 89 5C 24 08 4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 33 D2 4D 8B F1 49 8B C0 48 8B F1 44 8B E2 41 39 50 08 0F 8E";
 typedef char (*MatchProps_t)(void* pMap, const char* pszName, uint8_t* pSendTable, uint8_t* pRecvTable, int nUnused);
 static MatchProps_t v_MatchProps = nullptr;
+// Its mismatch exit (+0xA4: xor al, al; jmp end) and next-prop block (+0x217):
+// the exit is pointed at the next prop (the S21 bridge's decoder builder patch).
+static const int s_nMatchPropsFail = 0xA4;
+static const int s_nMatchPropsNext = 0x217;
+static const uint8_t s_matchPropsFailBytes[] = { 0x32, 0xC0, 0xE9, 0x96, 0x01, 0x00, 0x00 };
+static bool s_bMatcherLenient = false;
+// Per-decoder finisher CreateDecoders calls once the props are assigned
+// (0x255F30). CRecvDecoder: root RecvTable +0, flat SendProp* +0x18, RecvProp*
+// +0x4080 (count +0x4098), owner RecvTable* +0x40A0; an unmatched prop is left
+// NULL (and its owner unset), which every decode path dereferences.
+static const char* const s_pszPatternDecoderDone =
+	"48 8B C4 55 48 81 EC 50 01 00 00 80 3D ?? ?? ?? ?? 00 48 8B E9 0F 84 ?? ?? ?? ?? 48 89 58 08 48 8D 0D ?? ?? ?? ?? 48 89 70 10 48 8D 15";
+typedef void (*DecoderDone_t)(uint8_t* pDecoder);
+static DecoderDone_t v_DecoderDone = nullptr;
+
+// Client PrecacheWeapon(name) (0x8B63C0): a temporary weaponx entity gets the
+// name's index in the server's WeaponNames table (0x3FD1A38, FindStringIndex =
+// vtable +0x50; 0xFFFF only raises a script error), is precached and removed.
+static const char* const s_pszPatternPrecacheWeapon =
+	"48 89 74 24 10 57 48 83 EC 20 FF 05 ?? ?? ?? ?? 48 8B F1 B1 08 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C8 48 8B 10 4C 8B 42 18 48 8D 15";
+static const int s_nPrecacheWeaponTable = 0x73; // mov rcx, [WeaponNames]
+typedef char (*PrecacheWeapon_t)(const char* pszName);
+static PrecacheWeapon_t v_PrecacheWeapon = nullptr;
+static void* const* s_ppWeaponNames = nullptr;
+
+// Client PrecacheImpactEffectTable(name) (0x8A9310): AddString into the server's
+// ImpactEffectTableNames (0x3FD1A40; the dedi creates it with 256 entries), then
+// loads the table; a full table is a fatal Error. -1 is the engine's own
+// "no table" result (the script native 0xC63790 for an empty name).
+static const char* const s_pszPatternPrecacheImpact =
+	"48 89 5C 24 08 57 48 83 EC 30 48 8B D9 B1 11 E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 41 B9 FF FF FF FF 4C 8B C3 48 C7 44 24 20 00 00 00 00 33 D2 48 8B 01 FF 50 48";
+static const int s_nPrecacheImpactTable = 0x14; // mov rcx, [ImpactEffectTableNames]
+typedef int (*PrecacheImpact_t)(const char* pszName);
+static PrecacheImpact_t v_PrecacheImpact = nullptr;
+static void* const* s_ppImpactNames = nullptr;
 
 static CNetChan_ProcessPacket_t v_ProcessPacket = nullptr;
 static bf_read_Seek_t v_bfSeek = nullptr;
@@ -186,6 +237,29 @@ static int s_nEchoState = -1;
 static int s_nEchoSpawn = 0;
 static ULONGLONG s_nEchoUntilMs = 0;
 static ULONGLONG s_nEchoNextMs = 0;
+// Tick of the last snapshot the engine processed: acked in every C2S packet with
+// S3 clc_ClientTick (the dedi's delta base; it holds a FULL until that tick is acked).
+static int s_nAckTick = -1;
+// The engine's last clc_Move, transcoded to S3 (bridge_usercmd), written into the next C2S packet.
+static uint8_t s_pendingMove[2048];
+static int s_nPendingMoveBits = 0;
+// Relayed client messages (bridge_c2s): sent until nSendsLeft runs out.
+struct C2SSlot_t
+{
+	uint8_t data[1100];
+	int nBits;
+	int nSendsLeft;
+	ULONGLONG nSpacingMs;
+	ULONGLONG nNextDueMs;
+};
+static const int kC2SRing = 32;
+static C2SSlot_t s_c2sRing[kC2SRing];
+static float s_flTickInterval = 0.0f;
+
+// Queued for the engine socket when a DataBlock completes; the ProcessPacket
+// detour dispatches the DataBlock for it. Its first word is no S3 header the
+// engine treats specially (-1 connectionless, -2 split, -3 compressed).
+static const uint8_t s_wakeMarker[16] = { 'R', '5', 'F', 'S', '3', '0', 'W', 'A', 'K', 'E', 'D', 'B', 0, 0, 0, 0 };
 static bool s_bPendingUserInfo = false;
 static int s_nUserInfoSendsLeft = 0;
 static ULONGLONG s_nUserInfoNextMs = 0;
@@ -224,13 +298,44 @@ static void Netchan_BfInit(uint8_t* pBf, const uint8_t* pData, int nBytes)
 	v_bfSeek(pBf, 0);
 }
 
+void S30Netchan_BfInit(uint8_t* pBf, const uint8_t* pData, int nBytes)
+{
+	Netchan_BfInit(pBf, pData, nBytes);
+}
+
+// Records a caught fault (code, module-relative address, data address) for the log.
+static int Netchan_FaultFilter(EXCEPTION_POINTERS* pInfo, const char* pszWhere)
+{
+	const EXCEPTION_RECORD* const pRec = pInfo ? pInfo->ExceptionRecord : nullptr;
+	char szAddress[128] = "?";
+	if (pRec)
+		S30Log_FormatAddress(pRec->ExceptionAddress, szAddress, sizeof(szAddress));
+	S30Log("[NETCHAN] fault in %s: code 0x%08lX at %s, data 0x%llX\n", pszWhere, pRec ? pRec->ExceptionCode : 0, szAddress,
+		pRec && pRec->NumberParameters >= 2 ? static_cast<unsigned long long>(pRec->ExceptionInformation[1]) : 0ULL);
+	// The filter runs above the faulting frames, so they are in this trace.
+	void* pFrames[32];
+	const USHORT nFrames = RtlCaptureStackBackTrace(0, 32, pFrames, nullptr);
+	char szTrace[1024];
+	int nLen = 0;
+	szTrace[0] = '\0';
+	for (USHORT i = 0; i < nFrames && nLen < 960; ++i)
+	{
+		char szFrame[96];
+		S30Log_FormatAddress(pFrames[i], szFrame, sizeof(szFrame));
+		if (!strncmp(szFrame, "r5apex", 6) || !strncmp(szFrame, "client_s30", 10))
+			nLen += snprintf(szTrace + nLen, sizeof(szTrace) - nLen, " %s", szFrame);
+	}
+	S30Log("[NETCHAN]   stack:%s\n", szTrace);
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
 static bool Netchan_CallRead(void* pMsg, uint8_t* pBf, bool* pbFault)
 {
 	__try
 	{
 		return reinterpret_cast<char (*)(void*, void*)>((*reinterpret_cast<void***>(pMsg))[4])(pMsg, pBf) != 0;
 	}
-	__except (EXCEPTION_EXECUTE_HANDLER)
+	__except (Netchan_FaultFilter(GetExceptionInformation(), "ReadFromBuffer"))
 	{
 		*pbFault = true;
 		return false;
@@ -243,7 +348,7 @@ static bool Netchan_CallProcess(void* pMsg, bool* pbFault)
 	{
 		return reinterpret_cast<char (*)(void*)>((*reinterpret_cast<void***>(pMsg))[3])(pMsg) != 0;
 	}
-	__except (EXCEPTION_EXECUTE_HANDLER)
+	__except (Netchan_FaultFilter(GetExceptionInformation(), "Process"))
 	{
 		*pbFault = true;
 		return false;
@@ -267,9 +372,58 @@ static bool Netchan_HasRecvTable(const char* pszName)
 	return false;
 }
 
+// Stub RecvTables for the dedi's SendTables S30 lacks (the S21 bridge's stub
+// RecvTable): no props, so every SendProp ends on a dummy RecvProp. Registered
+// in the client's list before the SendTable arrives, so the engine builds a
+// decoder for it; kept for the process (the list keeps them across connects).
+struct StubTable_t
+{
+	const char* pszName;
+	uint8_t* pTable;
+	bool bRegistered;
+};
+static StubTable_t s_stubTables[256];
+static int s_nStubTables = 0;
+
+static StubTable_t* Netchan_StubTable(const char* pszName)
+{
+	for (int i = 0; i < s_nStubTables; ++i)
+	{
+		if (!_stricmp(s_stubTables[i].pszName, pszName))
+			return &s_stubTables[i];
+	}
+	if (s_nStubTables >= static_cast<int>(sizeof(s_stubTables) / sizeof(s_stubTables[0])))
+		return nullptr;
+	uint8_t* const pTable = static_cast<uint8_t*>(calloc(RT_SIZE, 1));
+	if (!pTable)
+		return nullptr;
+	StubTable_t& s = s_stubTables[s_nStubTables++];
+	s.pszName = _strdup(pszName);
+	s.pTable = pTable;
+	s.bRegistered = false;
+	*reinterpret_cast<const char**>(pTable + RT_NAME) = s.pszName;
+	pTable[RT_INITIALIZED] = 1;
+	return &s;
+}
+
+static bool Netchan_RegisterStubTable(StubTable_t& s)
+{
+	if (s.bRegistered)
+		return true;
+	if (!v_RecvTableListInsert || !s_ppRecvTableList)
+		return false;
+	void* const pElement = s.pTable;
+	const uint16_t nIndex = v_RecvTableListInsert(const_cast<uint8_t**>(s_ppRecvTableList), 0xFFFF, &pElement);
+	if (nIndex == 0xFFFF)
+		return false;
+	s.pTable[RT_IN_MAIN_LIST] = 1;
+	s.bRegistered = Netchan_HasRecvTable(s.pszName);
+	return s.bRegistered;
+}
+
 // Stub classes for the dedi's server classes S30 lacks (the S21 bridge's stub
-// ClientClass + stub RecvTable): the network name and a RecvTable carrying only
-// the server's datatable name. Kept for the process, reused across connects.
+// ClientClass): the network name and the stub RecvTable of the server's
+// datatable (the registered one when its SendTable came, so it has a decoder).
 struct StubClass_t
 {
 	uint8_t* pClass;
@@ -288,22 +442,124 @@ static uint8_t* Netchan_StubClass(const char* pszName, const char* pszTable)
 	}
 	if (s_nStubClasses >= static_cast<int>(sizeof(s_stubClasses) / sizeof(s_stubClasses[0])))
 		return nullptr;
-	uint8_t* const pClass = static_cast<uint8_t*>(calloc(64, 1));
-	uint8_t* const pTable = static_cast<uint8_t*>(calloc(0x500, 1));
-	if (!pClass || !pTable)
-	{
-		free(pClass);
-		free(pTable);
+	StubTable_t* const pStubTable = Netchan_StubTable(pszTable);
+	uint8_t* const pClass = pStubTable ? static_cast<uint8_t*>(calloc(64, 1)) : nullptr;
+	if (!pClass)
 		return nullptr;
-	}
 	StubClass_t& s = s_stubClasses[s_nStubClasses++];
 	s.pClass = pClass;
 	s.pszName = _strdup(pszName);
-	s.pszTable = _strdup(pszTable);
-	*reinterpret_cast<const char**>(pTable + RT_NAME) = s.pszTable;
+	s.pszTable = pStubTable->pszName;
 	*reinterpret_cast<const char**>(pClass + 0x10) = s.pszName;
-	*reinterpret_cast<uint8_t**>(pClass + 0x18) = pTable;
+	*reinterpret_cast<uint8_t**>(pClass + 0x18) = pStubTable->pTable;
 	return pClass;
+}
+
+// Dummy RecvProps for unmatched SendProps (the S21 bridge's '?_unmatched'): the
+// SendProp's own type, so its bits are read with its encoding, and a no-op proxy,
+// so nothing is written (S30's type decoders, e.g. Int 0x252A30, store through
+// the proxy when there is one). Arrays get an element dummy; their decoder
+// (0x253F70) steps by the RecvProp's stride (+0x58, 0 here).
+static const int RP_TYPE = 0x00;
+static const int RP_NAME = 0x28;
+static const int RP_ARRAY_ELEMENT = 0x38;
+static const int RP_PROXY = 0x48;
+static const int RP_SIZE = 0x80;
+
+static void Netchan_DummyProxy(void*, void*, void*)
+{
+}
+
+static uint8_t s_dummyProps[16][RP_SIZE];
+static uint8_t s_dummyArrays[16][RP_SIZE];
+static bool s_bDummyProp[16];
+static bool s_bDummyArray[16];
+
+static uint8_t* Netchan_DummyProp(int nType, int nElementType)
+{
+	static const char s_szName[] = "?_unmatched";
+	if (nType < 0 || nType >= 16 || (nType == 5 && (nElementType < 0 || nElementType >= 16 || nElementType == 5)))
+		return nullptr;
+	if (nType == 5)
+	{
+		uint8_t* const p = s_dummyArrays[nElementType];
+		if (!s_bDummyArray[nElementType])
+		{
+			*reinterpret_cast<int*>(p + RP_TYPE) = 5;
+			*reinterpret_cast<const char**>(p + RP_NAME) = s_szName;
+			*reinterpret_cast<uint8_t**>(p + RP_ARRAY_ELEMENT) = Netchan_DummyProp(nElementType, -1);
+			*reinterpret_cast<void**>(p + RP_PROXY) = reinterpret_cast<void*>(&Netchan_DummyProxy);
+			s_bDummyArray[nElementType] = true;
+		}
+		return p;
+	}
+	uint8_t* const p = s_dummyProps[nType];
+	if (!s_bDummyProp[nType])
+	{
+		*reinterpret_cast<int*>(p + RP_TYPE) = nType;
+		*reinterpret_cast<const char**>(p + RP_NAME) = s_szName;
+		*reinterpret_cast<uint8_t**>(p + RP_ARRAY_ELEMENT) = p;
+		*reinterpret_cast<void**>(p + RP_PROXY) = reinterpret_cast<void*>(&Netchan_DummyProxy);
+		s_bDummyProp[nType] = true;
+	}
+	return p;
+}
+
+static int s_nDummiedProps = 0;
+
+static int Netchan_FillDecoder(uint8_t* pDecoder)
+{
+	uint8_t** const ppProps = *reinterpret_cast<uint8_t***>(pDecoder + 0x4080);
+	uint8_t** const ppOwners = *reinterpret_cast<uint8_t***>(pDecoder + 0x40A0);
+	uint8_t* const* const ppSend = *reinterpret_cast<uint8_t* const* const*>(pDecoder + 0x18);
+	uint8_t* const pRoot = *reinterpret_cast<uint8_t**>(pDecoder);
+	const int nProps = *reinterpret_cast<const int*>(pDecoder + 0x4098);
+	if (!ppProps || !ppOwners || !ppSend || !pRoot)
+		return nProps > 0 ? -1 : 0;
+	int nFilled = 0;
+	for (int i = 0; i < nProps; ++i)
+	{
+		if (ppProps[i])
+			continue;
+		const uint8_t* const pSend = ppSend[i];
+		const int nType = pSend ? *reinterpret_cast<const int*>(pSend) : -1;
+		const uint8_t* const pElement = nType == 5 ? *reinterpret_cast<const uint8_t* const*>(pSend + 24) : nullptr;
+		uint8_t* const pDummy = Netchan_DummyProp(nType, pElement ? *reinterpret_cast<const int*>(pElement) : -1);
+		if (!pDummy)
+		{
+			S30Log("[NETCHAN] decoder '%s' prop %d: no dummy for send type %d\n",
+				*reinterpret_cast<const char* const*>(pRoot + RT_NAME), i, nType);
+			continue;
+		}
+		ppProps[i] = pDummy;
+		ppOwners[i] = pRoot;
+		++nFilled;
+	}
+	return nFilled;
+}
+
+static void h_DecoderDone(uint8_t* pDecoder)
+{
+	if (s_bActive && s_bMatcherLenient)
+	{
+		int nFilled = 0;
+		__try
+		{
+			nFilled = Netchan_FillDecoder(pDecoder);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			nFilled = -1;
+		}
+		if (nFilled)
+		{
+			s_nDummiedProps += nFilled > 0 ? nFilled : 0;
+			const uint8_t* const pRoot = *reinterpret_cast<uint8_t* const*>(pDecoder);
+			S30LogFile("[NETCHAN] decoder '%s': %d unmatched prop(s) on dummies%s\n",
+				pRoot ? *reinterpret_cast<const char* const*>(pRoot + RT_NAME) : "?", nFilled, nFilled < 0 ? " (FAULT)" : "");
+		}
+	}
+	v_DecoderDone(pDecoder);
 }
 
 static uint8_t* Netchan_ClientClasses(void)
@@ -359,6 +615,20 @@ static char h_EndClasses(uint8_t* pThis)
 	char szStubs[1024];
 	int nStubsLen = 0;
 	szStubs[0] = '\0';
+	// A stub needs a create function: CopyNewEntity calls ClientClass +0 (entnum,
+	// serial) for every entity of the class (0x2EF0B4). Stubs borrow info_target's:
+	// an invisible point entity; its props come through the stub's own decoder, all
+	// no-op dummies, so it keeps its defaults. +8 (create a temp entity) stays null:
+	// the event queue (0x2F6550) skips an event whose class has none, so a dedi temp
+	// entity S30 does not know is dropped instead of running info_target's.
+	const uint8_t* pDonor = nullptr;
+	for (const uint8_t* p = pOldHead; p && !pDonor; p = *reinterpret_cast<uint8_t* const*>(p + 0x20))
+	{
+		if (!_stricmp(*reinterpret_cast<const char* const*>(p + 0x10), "CInfoTarget"))
+			pDonor = p;
+	}
+	if (!pDonor)
+		S30Log("[NETCHAN] no CInfoTarget ClientClass -- stub classes have no create function\n");
 	for (int i = 0; i < nClasses; ++i)
 	{
 		const char* const pszName = *reinterpret_cast<const char* const*>(pServer + 32 * i + 8);
@@ -376,6 +646,8 @@ static char h_EndClasses(uint8_t* pThis)
 			S30Log("[NETCHAN] no stub class for '%s' (%s)\n", pszName, pszTable);
 			continue;
 		}
+		if (pDonor)
+			memcpy(pStub, pDonor, 0x8); // create
 		*reinterpret_cast<uint8_t**>(pStub + 0x20) = pFirst;
 		pFirst = pStub;
 		++nStubs;
@@ -483,13 +755,67 @@ static char h_MatchProps(void* pMap, const char* pszName, uint8_t* pSendTable, u
 	++s_nMatchDepth;
 	const char bResult = v_MatchProps(pMap, pszName, pSendTable, pRecvTable, nUnused);
 	--s_nMatchDepth;
-	if (!bResult && !s_nMatchDepth && s_bActive)
+	// Lenient (patched) builds always succeed, so the walk runs for every decoder.
+	if ((!bResult || s_bMatcherLenient) && !s_nMatchDepth && s_bActive && s_nPropMismatches < 5000)
 	{
 		const int nBefore = s_nPropMismatches;
 		Netchan_DiagPropsSafe(pszName ? pszName : "?", pSendTable, pRecvTable);
-		S30Log("[NETCHAN] decoder '%s' does not match: %d prop(s)\n", pszName ? pszName : "?", s_nPropMismatches - nBefore);
+		if (s_nPropMismatches != nBefore)
+			S30LogFile("[NETCHAN] decoder '%s' does not match: %d prop(s)\n", pszName ? pszName : "?", s_nPropMismatches - nBefore);
 	}
 	return bResult;
+}
+
+// FindStringIndex (INetworkStringTable vtable +0x50) on a string table global.
+static int Netchan_TableIndex(void* const* ppTable, const char* pszName)
+{
+	void* const pTable = ppTable ? *ppTable : nullptr;
+	if (!pTable || !pszName)
+		return -2;
+	__try
+	{
+		return reinterpret_cast<int (*)(void*, const char*)>((*reinterpret_cast<void***>(pTable))[10])(pTable, pszName);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return -3;
+	}
+}
+
+// A weapon the dedi never precached (S30-only, e.g. mp_ability_boost_kit_phase_
+// rewind_offhand) gets no settings, and removing the temporary entity reads them
+// (0x75B20B). The dedi cannot spawn it either, so its precache is skipped.
+static char h_PrecacheWeapon(const char* pszName)
+{
+	if (s_bActive)
+	{
+		const int nIndex = Netchan_TableIndex(s_ppWeaponNames, pszName);
+		if (nIndex == 0xFFFF)
+		{
+			static int s_nWeaponsSkipped = 0;
+			if (++s_nWeaponsSkipped <= 200)
+				S30Log("[NETCHAN] client PrecacheWeapon '%s' skipped: not in the server's WeaponNames\n", pszName ? pszName : "(null)");
+			return 1;
+		}
+	}
+	return v_PrecacheWeapon(pszName);
+}
+
+// The same for impact tables the dedi never precached (S30 heirlooms, abilities).
+static int h_PrecacheImpact(const char* pszName)
+{
+	if (s_bActive && pszName && *pszName)
+	{
+		const int nIndex = Netchan_TableIndex(s_ppImpactNames, pszName);
+		if (nIndex == 0xFFFF)
+		{
+			static int s_nImpactSkipped = 0;
+			if (++s_nImpactSkipped <= 200)
+				S30Log("[NETCHAN] client PrecacheImpactEffectTable '%s' skipped: not in the server's ImpactEffectTableNames\n", pszName);
+			return -1;
+		}
+	}
+	return v_PrecacheImpact(pszName);
 }
 
 // Kraken (8), SuperFast (1), as the S21 bridge.
@@ -551,7 +877,7 @@ static bool Netchan_Run(uint8_t* pChan, int nType30, const uint8_t* pData, int n
 	InterlockedIncrement(&s_nDispatched);
 	static volatile LONG s_nLog = 0;
 	const LONG n = InterlockedIncrement(&s_nLog);
-	if (n <= 200 || !bRead || bFault)
+	if (n <= 200 || !bRead || bFault || nType30 == 6 || (nType30 >= 26 && nType30 <= 30))
 		S30Log("[NETCHAN] S3 %d (%s) -> S30 %d: read %d process %d%s, %d bits\n", nS3, pszWhat, nType30,
 			bRead, bProcess, bFault ? " FAULT" : "", (pnEndBit ? *pnEndBit : 0) - nStartBit);
 	return bRead && !bFault;
@@ -617,7 +943,10 @@ static const char* const s_userInfoKV[][2] = {
 	{ "pin_plat_id", "0" }, { "net_minimumPacketLossDC", "0" }, { "community", "" }, { "stryder_security", "" },
 	{ "locationInfo", "51" }, { "locationInfo_nucleus", "" }, { "twitch_prime_rewards", "" },
 	{ "player_setting_stickysprintforward", "0" }, { "player_setting_holdtosprint", "0" },
-	{ "toggle_on_jump_to_deactivate", "1" }, { "mantle_boost_input_setting", "2" }, { "sdk_mods", "-" },
+	{ "toggle_on_jump_to_deactivate", "1" }, { "mantle_boost_input_setting", "2" },
+	// The dedi's mod policy gate disconnects an active client whose sdk_mods does not parse
+	// (ModSystem_ParseAttestation): "<ids>#<FNV-1a 64 of ids>", "-" for none. S30 loads no SDK mods.
+	{ "sdk_mods", "-#af63a04c86018698" },
 };
 
 static int Netchan_BuildPacketLocked(uint8_t* pOut, int nOutSize)
@@ -681,6 +1010,33 @@ static int Netchan_BuildPacketLocked(uint8_t* pOut, int nOutSize)
 		S30Log("[NETCHAN] C2S UserInfo (%d ConVars, %d copies left)\n", nVars, s_nUserInfoSendsLeft);
 		if (s_nUserInfoSendsLeft <= 0 || s_nSignonSeqMax >= 4)
 			s_bPendingUserInfo = false;
+	}
+
+	if (s_nPendingMoveBits > 0 && (nOutSize * 8 - w.m_nPos) >= s_nPendingMoveBits + 128)
+	{
+		S30BitReader_t move(s_pendingMove, (s_nPendingMoveBits + 7) / 8);
+		w.WriteFrom(move, s_nPendingMoveBits);
+		s_nPendingMoveBits = 0;
+	}
+
+	// Relayed client messages (bridge_c2s), each sent nSends times nSpacingMs apart:
+	// the dedi drops repeats by their sequence (S21 C2SRel_PumpLocked).
+	for (int i = 0; i < kC2SRing; ++i)
+	{
+		C2SSlot_t& e = s_c2sRing[i];
+		if (e.nSendsLeft <= 0 || nNow < e.nNextDueMs || (nOutSize * 8 - w.m_nPos) < e.nBits + 256)
+			continue;
+		S30BitReader_t msg(e.data, (e.nBits + 7) / 8);
+		w.WriteFrom(msg, e.nBits);
+		--e.nSendsLeft;
+		e.nNextDueMs = nNow + e.nSpacingMs;
+	}
+
+	if (s_nAckTick >= 0)
+	{
+		w.Write(60, 7);         // clc_ClientTick (dedi type 60): [32 tick][32 raw tick], raw = delta base
+		w.Write(static_cast<uint32_t>(s_nAckTick), 32);
+		w.Write(static_cast<uint32_t>(s_nAckTick), 32);
 	}
 
 	while (w.Bytes() < 16)
@@ -894,6 +1250,10 @@ static bool Netchan_OnServerInfo(uint8_t* pChan, S30BitReader_t& r)
 	}
 	S30Log("[NETCHAN] ServerInfo: proto %u count %u ded %u f6 %u f7 %u f8 %u f9 %u f10 %u f11 %u f12 %u flags %u\n",
 		nProto, nCount, b1, f6, f7, f8, f9, f10, f11, f12, nFlags);
+	float flTickInterval = 0.0f; // f11: the server's tick interval (0.05 on the dedi)
+	memcpy(&flTickInterval, &f11, sizeof(flTickInterval));
+	if (flTickInterval > 0.0f && flTickInterval < 1.0f)
+		s_flTickInterval = flTickInterval;
 	S30Log("[NETCHAN] ServerInfo strings: '%s' '%s' '%s' '%s' '%s' '%s' '%s' '%s'\n",
 		sz[0], sz[1], sz[2], sz[3], sz[4], sz[5], sz[6], sz[7]);
 
@@ -1081,6 +1441,160 @@ static bool Netchan_OnCreateStringTable(uint8_t* pChan, S30BitReader_t& r)
 }
 
 // Walks an S3 message stream (DataBlock, reliable transfer or packet tail).
+// S3 svc_Snapshot body (after the 7-bit type) -> S30's snapshot message (type 50,
+// reader 0x48AD70). S30's header is S21's (same ServerTickInfo reader, same reads
+// after it), so this is the S21 bridge's re-encode: ServerTickInfo's 1-bit field
+// widens to 16 bits (137 -> 152), the payload length from 22 to 24 bits; the entity
+// payload is copied as is (decoded with the dedi's own SendTables).
+static bool Netchan_OnSnapshot(uint8_t* pChan, S30BitReader_t& r)
+{
+	const uint32_t nServerCount = r.Read(32);
+	const uint32_t nTick1 = r.Read(32), nTick2 = r.Read(32), nCompute = r.Read(16), nStdDev = r.Read(16);
+	const uint32_t bConn = r.Read(1), nByte = r.Read(8), nCmdRun = r.Read(32);
+	const uint32_t nMaxEntries = r.Read(15);
+	const uint32_t bDelta = r.Read(1);
+	uint32_t nDeltaFrom = 0, bRawDelta = 0, nRawDeltaFrom = 0;
+	if (bDelta)
+	{
+		nDeltaFrom = r.Read(32);
+		bRawDelta = r.Read(1);
+		if (bRawDelta)
+			nRawDeltaFrom = r.Read(32);
+	}
+	const uint32_t sh0 = r.Read(32), sh1 = r.Read(32), sh2 = r.Read(32), sh3 = r.Read(16); // 112 bits, same layout
+	const uint32_t nLengthBits = r.Read(22);
+	if (r.m_bOverflow || static_cast<int>(nLengthBits) > r.BitsLeft())
+	{
+		S30Log("[NETCHAN] Snapshot: %u payload bits, %d left -- stop\n", nLengthBits, r.BitsLeft());
+		return false;
+	}
+
+	const int nOutBits = 32 + 152 + 15 + 1 + (bDelta ? 33 + (bRawDelta ? 32 : 0) : 0) + 112 + 24 + static_cast<int>(nLengthBits);
+	const int nCapacity = (nOutBits + 7) / 8 + 16;
+	static uint8_t* s_pBuf = nullptr;
+	static int s_nCapacity = 0;
+	if (s_nCapacity < nCapacity)
+	{
+		free(s_pBuf);
+		s_pBuf = static_cast<uint8_t*>(malloc(nCapacity));
+		s_nCapacity = s_pBuf ? nCapacity : 0;
+		if (!s_pBuf)
+			return false;
+	}
+	S30BitWriter_t w(s_pBuf, s_nCapacity);
+	w.Write(nServerCount, 32);
+	w.Write(nTick1, 32); w.Write(nTick2, 32); w.Write(nCompute, 16); w.Write(nStdDev, 16);
+	w.Write(bConn, 16); w.Write(nByte, 8); w.Write(nCmdRun, 32);
+	w.Write(nMaxEntries, 15);
+	w.Write(bDelta, 1);
+	if (bDelta)
+	{
+		w.Write(nDeltaFrom, 32);
+		w.Write(bRawDelta, 1);
+		if (bRawDelta)
+			w.Write(nRawDeltaFrom, 32);
+	}
+	w.Write(sh0, 32); w.Write(sh1, 32); w.Write(sh2, 32); w.Write(sh3, 16);
+	w.Write(nLengthBits, 24);
+	w.WriteFrom(r, static_cast<int>(nLengthBits));
+	int nLen = w.Bytes();
+	Netchan_Pad(nLen);
+	const bool bOk = !w.m_bOverflow && Netchan_Run(pChan, 50, s_pBuf, nLen, 0, nullptr, "Snapshot", 40);
+
+	static volatile LONG s_nSnapshots = 0;
+	const LONG n = InterlockedIncrement(&s_nSnapshots);
+	if (n <= 20 || !bOk || n % 1000 == 0)
+		S30Log("[NETCHAN] Snapshot #%ld tick %u %s%u, %u payload bits, ok %d\n", n, nTick1,
+			bDelta ? "delta from " : "full", bDelta ? nDeltaFrom : 0, nLengthBits, bOk);
+	if (bOk)
+	{
+		AcquireSRWLockExclusive(&s_lock);
+		s_nAckTick = static_cast<int>(nTick1);
+		ReleaseSRWLockExclusive(&s_lock);
+		S30ScriptRemote_OnSnapshot(nTick1);
+	}
+	return true; // the payload is consumed either way: the stream stays aligned
+}
+
+// S3 svc_TempEntities (41) -> S30 51 (S21 48's reader): the length field grows from 22
+// to 24 bits, the blob is copied as is (S21 bridge). A temp entity of a class S30
+// does not have reaches a stub ClientClass with no create-event function and is
+// skipped by the event queue (0x2F6550).
+static bool Netchan_OnTempEntities(uint8_t* pChan, S30BitReader_t& r)
+{
+	const uint32_t nTick = r.Read(32);
+	const uint32_t nCount = r.Read(10);
+	const uint32_t nLength = r.Read(22);
+	if (r.m_bOverflow || static_cast<int>(nLength) > r.BitsLeft())
+	{
+		S30Log("[NETCHAN] TempEntities: %u bits, %d left -- stop\n", nLength, r.BitsLeft());
+		return false;
+	}
+	static uint8_t s_buf[(66 + (1 << 22)) / 8 + 16];
+	S30BitWriter_t w(s_buf, sizeof(s_buf));
+	w.Write(nTick, 32);
+	w.Write(nCount, 10);
+	w.Write(nLength, 24);
+	w.WriteFrom(r, static_cast<int>(nLength));
+	int nLen = w.Bytes();
+	Netchan_Pad(nLen);
+	const bool bOk = !w.m_bOverflow && Netchan_Run(pChan, 51, s_buf, nLen, 0, nullptr, "TempEntities", 41);
+	static volatile LONG s_nLog = 0;
+	const LONG n = InterlockedIncrement(&s_nLog);
+	if (n <= 10 || !bOk || n % 500 == 0)
+		S30LogFile("[NETCHAN] TempEntities #%ld tick %u, %u entries, %u bits, ok %d\n", n, nTick, nCount, nLength, bOk);
+	return true; // consumed either way: the stream stays aligned
+}
+
+// S3 net_ScriptMessage (68, the dedi SDK's S2C ScriptRemote lane; the S21 bridge's
+// S21Bridge_HandleS2CScriptRemote). A call frame is [32 magic 'SR2D'][32 snapshot
+// tick][8 isUI][8 replay][8 name length][name][8 args][typed args]; the untyped ones
+// run on the S30 VMs (bridge_scriptremote_s30), each name logged once here.
+static bool Netchan_OnScriptMessage(S30BitReader_t& r)
+{
+	const uint32_t bTyped = r.Read(1);
+	const uint32_t nBytes = r.Read(16);
+	if (r.m_bOverflow || static_cast<int>(nBytes) * 8 > r.BitsLeft())
+	{
+		S30Log("[NETCHAN] ScriptMessage: %u bytes, %d bits left -- stop\n", nBytes, r.BitsLeft());
+		return false;
+	}
+	uint8_t frame[1024];
+	const uint32_t nKeep = nBytes < sizeof(frame) ? nBytes : static_cast<uint32_t>(sizeof(frame));
+	r.ReadBytes(frame, static_cast<int>(nKeep));
+	r.Skip(static_cast<int>(nBytes - nKeep) * 8);
+
+	static volatile LONG s_nMessages = 0;
+	const LONG n = InterlockedIncrement(&s_nMessages);
+	uint32_t nMagic = 0;
+	if (nKeep >= 4)
+		memcpy(&nMagic, frame, 4);
+	char szName[65] = "";
+	if (!bTyped && nMagic == 0x53523244u && nKeep >= 11)
+	{
+		const uint32_t nName = frame[10];
+		if (nName && nName <= 64 && 11 + nName <= nKeep)
+		{
+			memcpy(szName, frame + 11, nName);
+			szName[nName] = '\0';
+		}
+	}
+	// Log each function name once (up to 128 names), then every 500th message.
+	static char s_szSeen[128][65];
+	static int s_nSeen = 0;
+	bool bNew = szName[0] != '\0';
+	for (int i = 0; i < s_nSeen && bNew; ++i)
+		bNew = strcmp(s_szSeen[i], szName) != 0;
+	if (bNew && s_nSeen < 128)
+		strcpy_s(s_szSeen[s_nSeen++], szName);
+	if ((bNew && s_nSeen <= 128) || n % 500 == 0)
+		S30LogFile("[NETCHAN] ScriptMessage #%ld: %s%s (typed %u, magic 0x%08X, %u bytes)\n", n,
+			szName[0] ? "S2C remote call " : "frame", szName, bTyped, nMagic, nBytes);
+	if (!bTyped && nKeep == nBytes)
+		S30ScriptRemote_OnFrame(frame, nBytes);
+	return true;
+}
+
 static void Netchan_Dispatch(uint8_t* pChan, const uint8_t* pData, int nBytes, int nStartBit, const char* pszSource)
 {
 	S30BitReader_t r(pData, nBytes, nStartBit);
@@ -1248,16 +1762,94 @@ static void Netchan_Dispatch(uint8_t* pChan, const uint8_t* pData, int nBytes, i
 			S30Log("[NETCHAN] DLCNotifyOwnership consumed (N = %d balances)\n", nAfter / 16);
 			break;
 		}
-		case 32: // svc_PlaylistChange: dedi string, S30 a 7-bit index -- consumed
+		case 32: // svc_PlaylistChange: dedi string, S30 a 7-bit index -- applied by name (bridge_hud)
 		{
 			char szName[65];
 			r.ReadString(szName, sizeof(szName), 64);
-			S30Log("[NETCHAN] PlaylistChange '%s' (consumed)\n", szName);
+			S30Hud_PlaylistChange(szName);
 			break;
 		}
 		case 12:
 			bContinue = Netchan_OnCreateStringTable(pChan, r);
 			break;
+		case 13: // svc_UpdateStringTable: S30 17 reads S21's format ([5 id][1 many][16 count][20 length]);
+		{        // the ids follow the bridge's in-order CreateStringTable
+			int nEnd = 0;
+			bContinue = Netchan_Run(pChan, 17, pData, nBytes, r.m_nPos, &nEnd, "UpdateStringTable", 13);
+			r.m_nPos = nEnd;
+			break;
+		}
+		case 40:
+			bContinue = Netchan_OnSnapshot(pChan, r);
+			break;
+		case 18: // svc_FixAngle: S30 22 reads S21 21's format (same reader body, identical writer)
+		{
+			int nEnd = 0;
+			bContinue = Netchan_Run(pChan, 22, pData, nBytes, r.m_nPos, &nEnd, "FixAngle", 18);
+			r.m_nPos = nEnd;
+			break;
+		}
+		case 68: // net_ScriptMessage (dedi SDK): [1 typed][16 byteLen][frame], the S2C ScriptRemote lane
+			bContinue = Netchan_OnScriptMessage(r);
+			break;
+		case 14: // svc_VoiceData
+		case 15: // svc_DurangoVoiceData
+		case 17: // svc_Sounds: [32 tick][8 payload bits][payload], S30 21 reads S21 20's format
+		case 19: // svc_CrosshairAngle
+		case 20: // svc_GrantClientSidePickup
+		case 29: // svc_MatchmakingETAs
+		case 30: // svc_MatchmakingStatus
+		case 31: // svc_MTXUserInfo
+		case 33: // svc_SetTeam
+		{        // the S21 bridge dispatches these natively (renumbered); docs/11: same S30 readers
+			int nEnd = 0;
+			bContinue = Netchan_Run(pChan, Netchan_S30Type(nS3), pData, nBytes, r.m_nPos, &nEnd, "native", nS3);
+			r.m_nPos = nEnd;
+			break;
+		}
+		case 37: // svc_UserMessage: [8 type][12 length bits][payload], direct handlers (bridge_usermessage)
+			bContinue = S30UserMessage_OnS3(r);
+			break;
+		case 41: // svc_TempEntities: [32 tick][10 count][22 length][blob] -> S30 51: length 24 bits (S21 bridge)
+			bContinue = Netchan_OnTempEntities(pChan, r);
+			break;
+		case 66: // svc_SetClassVar (dedi SDK): two strings, consumed as on S21
+		case 67: // svc_SystemSayText (dedi SDK): two strings + admin bit
+		{
+			char szFirst[512], szSecond[512];
+			if (!Netchan_ReadString(r, szFirst, sizeof(szFirst)) || !Netchan_ReadString(r, szSecond, sizeof(szSecond)))
+			{
+				bContinue = false;
+				break;
+			}
+			if (nS3 == 67)
+				S30Hud_SystemSayText(szFirst, szSecond, r.Read(1) != 0);
+			break;
+		}
+		case 69: // svc_DebugOverlay (dedi SDK): [16 byteLen][bytes], consumed (dev draws)
+		case 70: // svc_ChatBuilder (dedi SDK): [16 byteLen][bytes], shown as text (bridge_hud)
+		{
+			const uint32_t nLen = r.Read(16);
+			if (r.m_bOverflow || static_cast<int>(nLen) * 8 > r.BitsLeft() || nLen > 2048)
+			{
+				bContinue = false;
+				break;
+			}
+			uint8_t payload[2048];
+			r.ReadBytes(payload, static_cast<int>(nLen));
+			if (nS3 == 70)
+				S30Hud_ChatBuilder(payload, static_cast<int>(nLen));
+			else
+			{
+				static bool s_bSeen = false;
+				if (!s_bSeen)
+				{
+					s_bSeen = true;
+					S30Log("[NETCHAN] S3 69 (DebugOverlay) consumed, not drawn\n");
+				}
+			}
+			break;
+		}
 		case 8:  // svc_SendTable: S30 reader the same (docs/11); no S21-style table renames yet
 		case 9:  // svc_ClassInfo
 		{
@@ -1271,6 +1863,18 @@ static void Netchan_Dispatch(uint8_t* pChan, const uint8_t* pData, int nBytes, i
 				peek.Read(32);
 				peek.ReadString(szTable, sizeof(szTable), 256);
 				bNoRecvTable = bNeedsDecoder && !Netchan_HasRecvTable(szTable);
+				if (bNoRecvTable && s_bMatcherLenient && v_DecoderDone)
+				{
+					// A stub RecvTable gets the decoder; its props all end on dummies.
+					StubTable_t* const pStub = Netchan_StubTable(szTable);
+					if (pStub && Netchan_RegisterStubTable(*pStub))
+					{
+						S30Log("[NETCHAN] SendTable '%s': no S30 RecvTable, stub registered\n", szTable);
+						bNoRecvTable = false;
+					}
+					else
+						S30Log("[NETCHAN] SendTable '%s': stub RecvTable not registered\n", szTable);
+				}
 			}
 			int nEnd = 0;
 			bool bOk;
@@ -1568,6 +2172,13 @@ static void Netchan_OnPacket(uint8_t* pChan, uint8_t* pPacket)
 	Netchan_CallHandler(pChan, 6);
 }
 
+static bool Netchan_IsWakeMarker(const uint8_t* pPacket)
+{
+	const uint8_t* const pData = *reinterpret_cast<uint8_t* const*>(pPacket + PKT_DATA);
+	const int nSize = *reinterpret_cast<const int*>(pPacket + PKT_SIZE);
+	return pData && nSize == sizeof(s_wakeMarker) && !memcmp(pData, s_wakeMarker, sizeof(s_wakeMarker));
+}
+
 static void h_ProcessPacket(uint8_t* pChan, uint8_t* pPacket)
 {
 	if (!s_bActive || !S30Signon_IsDestNetadr(pPacket))
@@ -1575,7 +2186,64 @@ static void h_ProcessPacket(uint8_t* pChan, uint8_t* pPacket)
 		v_ProcessPacket(pChan, pPacket);
 		return;
 	}
+	if (Netchan_IsWakeMarker(pPacket))
+	{
+		Netchan_CallHandler(pChan, 5);
+		Netchan_DispatchDataBlock(pChan);
+		Netchan_CallHandler(pChan, 6);
+		return;
+	}
 	Netchan_OnPacket(pChan, pPacket);
+}
+
+float S30Netchan_TickInterval(void)
+{
+	return s_flTickInterval;
+}
+
+bool S30Netchan_QueueC2S(const uint8_t* pBits, int nBits, int nSends, int nSpacingMs)
+{
+	if (!s_bActive || nBits <= 0 || nBits > static_cast<int>(sizeof(s_c2sRing[0].data)) * 8 || nSends <= 0)
+		return false;
+	AcquireSRWLockExclusive(&s_lock);
+	C2SSlot_t* pSlot = nullptr;
+	for (int i = 0; i < kC2SRing && !pSlot; ++i)
+	{
+		if (s_c2sRing[i].nSendsLeft <= 0)
+			pSlot = &s_c2sRing[i];
+	}
+	if (pSlot)
+	{
+		memcpy(pSlot->data, pBits, (nBits + 7) / 8);
+		pSlot->nBits = nBits;
+		pSlot->nSendsLeft = nSends;
+		pSlot->nSpacingMs = static_cast<ULONGLONG>(nSpacingMs);
+		pSlot->nNextDueMs = 0;
+		Netchan_FlushLocked("c2s");
+	}
+	ReleaseSRWLockExclusive(&s_lock);
+	return pSlot != nullptr;
+}
+
+bool S30Netchan_QueueMove(const uint8_t* pBits, int nBits)
+{
+	if (!s_bActive || nBits <= 0 || nBits > static_cast<int>(sizeof(s_pendingMove)) * 8)
+		return false;
+	AcquireSRWLockExclusive(&s_lock);
+	// Unsent moves are superseded: each batch carries its backup commands.
+	memcpy(s_pendingMove, pBits, (nBits + 7) / 8);
+	s_nPendingMoveBits = nBits;
+	Netchan_FlushLocked("move");
+	ReleaseSRWLockExclusive(&s_lock);
+	return true;
+}
+
+void S30Netchan_WakeForDataBlock(void)
+{
+	if (!s_bActive)
+		return;
+	if (!S30Signon_QueueForEngine(s_wakeMarker, sizeof(s_wakeMarker)))
+		S30Log("[NETCHAN] DataBlock wake not queued (engine socket not known yet) -- dispatched with the next packet\n");
 }
 
 // C2S rungs follow the engine's own signon walk (S21 bridge Hook_CS_SetSignonState).
@@ -1611,6 +2279,10 @@ void S30Netchan_Begin(S30NetchanSend_t pfnSend)
 	s_nLastSentSignon = -1;
 	s_nSignonQHead = s_nSignonQCount = 0;
 	s_nEchoState = -1;
+	s_nAckTick = -1;
+	s_nPendingMoveBits = 0;
+	memset(s_c2sRing, 0, sizeof(s_c2sRing));
+	S30C2S_Reset();
 	s_bPendingUserInfo = false;
 	s_nUserInfoSendsLeft = 0;
 	s_nLastFlushMs = 0;
@@ -1730,6 +2402,61 @@ bool S30Netchan_Install(void)
 	v_MatchProps = reinterpret_cast<MatchProps_t>(S30Pattern_FindUnique(s_pszPatternMatchProps, &nMatches));
 	if (!v_MatchProps)
 		S30Log("[NETCHAN] CompareRecvPropToSendProp builder unresolved (matches=%d)\n", nMatches);
+	uint8_t* const pPrecache = S30Pattern_FindUnique(s_pszPatternPrecacheWeapon, &nMatches);
+	if (pPrecache && pPrecache[s_nPrecacheWeaponTable] == 0x48 && pPrecache[s_nPrecacheWeaponTable + 2] == 0x0D)
+	{
+		const uint8_t* const p = pPrecache + s_nPrecacheWeaponTable;
+		s_ppWeaponNames = reinterpret_cast<void* const*>(p + 7 + *reinterpret_cast<const int32_t*>(p + 3));
+		v_PrecacheWeapon = reinterpret_cast<PrecacheWeapon_t>(pPrecache);
+	}
+	else
+		S30Log("[NETCHAN] PrecacheWeapon unresolved (matches=%d)\n", nMatches);
+	uint8_t* const pImpact = S30Pattern_FindUnique(s_pszPatternPrecacheImpact, &nMatches);
+	if (pImpact && pImpact[s_nPrecacheImpactTable] == 0x48 && pImpact[s_nPrecacheImpactTable + 2] == 0x0D)
+	{
+		const uint8_t* const p = pImpact + s_nPrecacheImpactTable;
+		s_ppImpactNames = reinterpret_cast<void* const*>(p + 7 + *reinterpret_cast<const int32_t*>(p + 3));
+		v_PrecacheImpact = reinterpret_cast<PrecacheImpact_t>(pImpact);
+	}
+	else
+		S30Log("[NETCHAN] PrecacheImpactEffectTable unresolved (matches=%d)\n", nMatches);
+	v_DecoderDone = reinterpret_cast<DecoderDone_t>(S30Pattern_FindUnique(s_pszPatternDecoderDone, &nMatches));
+	if (!v_DecoderDone)
+		S30Log("[NETCHAN] decoder finisher unresolved (matches=%d) -- unmatched props stay fatal\n", nMatches);
+
+	uint8_t* ppInsert[8];
+	const int nInsert = S30Pattern_FindAll(s_pszPatternListInsert, ppInsert, 8);
+	for (int i = 0; i < nInsert && s_ppRecvTableList; ++i)
+	{
+		const uint8_t* const pLoad = ppInsert[i] + s_nListInsertListLoad;
+		if (pLoad[0] == 0x48 && pLoad[1] == 0x8B && pLoad[2] == 0x0D
+			&& pLoad + 7 + *reinterpret_cast<const int32_t*>(pLoad + 3) == reinterpret_cast<const uint8_t*>(s_ppRecvTableList))
+			v_RecvTableListInsert = reinterpret_cast<RecvTableListInsert_t>(ppInsert[i]);
+	}
+	if (!v_RecvTableListInsert)
+		S30Log("[NETCHAN] RecvTable list insert unresolved (%d candidates) -- no stub RecvTables\n", nInsert);
+
+	// Decoder builder: a mismatch goes on to the next prop instead of failing the decoder.
+	if (v_MatchProps && v_DecoderDone)
+	{
+		uint8_t* const pFail = reinterpret_cast<uint8_t*>(v_MatchProps) + s_nMatchPropsFail;
+		if (!memcmp(pFail, s_matchPropsFailBytes, sizeof(s_matchPropsFailBytes)))
+		{
+			DWORD nOld = 0;
+			if (VirtualProtect(pFail, sizeof(s_matchPropsFailBytes), PAGE_EXECUTE_READWRITE, &nOld))
+			{
+				const int32_t nRel = s_nMatchPropsNext - (s_nMatchPropsFail + 5);
+				pFail[0] = 0xE9;
+				memcpy(pFail + 1, &nRel, 4);
+				pFail[5] = pFail[6] = 0x90;
+				VirtualProtect(pFail, sizeof(s_matchPropsFailBytes), nOld, &nOld);
+				FlushInstructionCache(GetCurrentProcess(), pFail, sizeof(s_matchPropsFailBytes));
+				s_bMatcherLenient = true;
+			}
+		}
+		else
+			S30Log("[NETCHAN] decoder builder mismatch exit not as expected -- left strict\n");
+	}
 
 	v_ProcessPacket = reinterpret_cast<CNetChan_ProcessPacket_t>(pProcess);
 	v_SetSignonState = reinterpret_cast<CClientState_SetSignonState_t>(pSignon);
@@ -1741,6 +2468,12 @@ bool S30Netchan_Install(void)
 		DetourAttach(&reinterpret_cast<PVOID&>(v_EndClasses), h_EndClasses);
 	if (v_MatchProps)
 		DetourAttach(&reinterpret_cast<PVOID&>(v_MatchProps), h_MatchProps);
+	if (v_DecoderDone)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_DecoderDone), h_DecoderDone);
+	if (v_PrecacheWeapon)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_PrecacheWeapon), h_PrecacheWeapon);
+	if (v_PrecacheImpact)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_PrecacheImpact), h_PrecacheImpact);
 	const LONG nError = DetourTransactionCommit();
 	S30Log("[NETCHAN] ProcessPacket @ 0x%llX, SetSignonState @ 0x%llX %s (commit %ld); Seek @ 0x%llX, net time @ 0x%llX\n",
 		static_cast<unsigned long long>(S30Pattern_Rva(pProcess)), static_cast<unsigned long long>(S30Pattern_Rva(pSignon)),

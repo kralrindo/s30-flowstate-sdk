@@ -86,6 +86,37 @@ inline uint8_t* S30Pattern_FindUnique(const char* pszPattern, int* pnMatches = n
 	return nullptr;
 }
 
+// Every match of a signature in the host .text (up to nMax); returns the count found.
+inline int S30Pattern_FindAll(const char* pszPattern, uint8_t** ppOut, int nMax)
+{
+	uint8_t bytes[256];
+	bool mask[256];
+	const size_t nLen = S30Pattern_Parse(pszPattern, bytes, mask, sizeof(bytes));
+	if (!nLen)
+		return 0;
+	const uintptr_t base = S30Image_Base();
+	const auto* pNt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+	const IMAGE_SECTION_HEADER* pSec = IMAGE_FIRST_SECTION(pNt);
+	for (WORD i = 0; i < pNt->FileHeader.NumberOfSections; ++i, ++pSec)
+	{
+		if (memcmp(pSec->Name, ".text", 5) != 0)
+			continue;
+		uint8_t* const pStart = reinterpret_cast<uint8_t*>(base + pSec->VirtualAddress);
+		const size_t nSize = pSec->Misc.VirtualSize;
+		int nFound = 0;
+		for (size_t off = 0; off + nLen <= nSize && nFound < nMax; ++off)
+		{
+			size_t k = 0;
+			while (k < nLen && (!mask[k] || pStart[off + k] == bytes[k]))
+				++k;
+			if (k == nLen)
+				ppOut[nFound++] = pStart + off;
+		}
+		return nFound;
+	}
+	return 0;
+}
+
 inline uintptr_t S30Pattern_Rva(const void* pAddress)
 {
 	return reinterpret_cast<uintptr_t>(pAddress) - S30Image_Base();

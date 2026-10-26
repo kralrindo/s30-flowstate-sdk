@@ -24,6 +24,13 @@
 #include "identity_s30.h"
 #include "bridge_signon_s30.h"
 #include "bridge_netchan_s30.h"
+#include "bridge_persistence_s30.h"
+#include "bridge_usercmd_s30.h"
+#include "bridge_scriptremote_s30.h"
+#include "bridge_usermessage_s30.h"
+#include "bridge_activity_s30.h"
+#include "bridge_cmdseed_s30.h"
+#include "bridge_hud_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -128,6 +135,13 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30NetDiag_Install();
 	S30Signon_Install();
 	S30Netchan_Install();
+	S30Persistence_Install();
+	S30Usercmd_Install();
+	S30ScriptRemote_Install();
+	S30UserMessage_Install();
+	S30Activity_Install();
+	S30CmdSeed_Install();
+	S30Hud_Install();
 	S30Identity_Init();
 	S30Console_StartInput();
 

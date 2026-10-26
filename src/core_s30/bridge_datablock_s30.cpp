@@ -41,6 +41,7 @@ static SRWLOCK s_signonLock = SRWLOCK_INIT;
 static std::vector<uint8_t> s_signon;
 static int s_nSignonTransferNr = -1;
 static bool s_bSignonPending = false;
+static bool s_bWakePending = false;
 
 static void DataBlock_SendAck(bool bComplete)
 {
@@ -157,7 +158,17 @@ static void DataBlock_OnComplete(void)
 	s_signon.swap(out);
 	s_nSignonTransferNr = s_nTransferNr;
 	s_bSignonPending = true;
+	s_bWakePending = true;
 	ReleaseSRWLockExclusive(&s_signonLock);
+}
+
+bool S30DataBlock_TakeWake(void)
+{
+	AcquireSRWLockExclusive(&s_signonLock);
+	const bool bWake = s_bWakePending;
+	s_bWakePending = false;
+	ReleaseSRWLockExclusive(&s_signonLock);
+	return bWake;
 }
 
 void S30DataBlock_Reset(S30DataBlockSend_t pfnSend)

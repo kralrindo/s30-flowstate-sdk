@@ -151,8 +151,176 @@ wrapper of `0x256440`): 528 with no RecvProp of that name (`m_shieldHealth`, `m_
 `m_classModsActive` int64 → array, ...), 12 with another array size (`m_bools` 32 vs 36, `m_int32s` 6 vs 8,
 `m_entities` 22 vs 24). `DT_Player` alone has 81.
 
+## Step 4: tolerant decoders, precache sync (signon reaches SPAWN)
+
+| | S30.1 |
+|---|---|
+| decoder builder mismatch exit | `0x256440+0xA4` (`xor al,al; jmp end`), next prop at `+0x217`: patched to `jmp next` (S21's DecodeAbort patch) |
+| per-decoder finisher | `0x255F30`, called by CreateDecoders after the props are set; CRecvDecoder: root RecvTable `+0`, SendProp* `+0x18`, RecvProp* `+0x4080` (count `+0x4098`), owner `+0x40A0`; unmatched = NULL prop, owner unset |
+| prop type functions | table `0x1B49350`, 6 per type (decode `+0x10`, decode-zero `+0x20`); Int decode `0x252A30` writes through the RecvProp proxy (`+0x48`) when there is one; array decode `0x253F70` steps by the RecvProp's element (`+0x38`) and stride (`+0x58`) |
+| RecvTable list insert | `0x2639D0` (CUtlLinkedList InsertBefore of `0x1B59968`; 5 template copies, picked by the list it loads) |
+| `RecvTable_Decode` / BuildEntityDecode `0x308770` | a class whose RecvTable has no decoder is fatal |
+| PrecacheWeapon `0x8B63C0`, PrecacheImpactEffectTable `0x8A9310` | a name missing from the server's WeaponNames crashes on removal (`0x75B20B`, NULL settings); a full ImpactEffectTableNames is a fatal Error |
+
+- Unmatched SendProps get dummy RecvProps (the SendProp's type, no-op proxy; arrays an element dummy) and the
+  decoder's root as owner; the dedi's 21 tables S30 lacks get stub RecvTables registered through the engine's own
+  list insert, so they have decoders, and the stub ClientClasses use them.
+- Client precaches of weapons / impact tables the dedi lacks are skipped (logged). `s30/tools/dedi_precache_sync.py`
+  writes the weapons into a SERVER block of the dedi's `sh_weapons.gnut` (8: S30 abilities whose server script the
+  S21-era dedi does not have; WeaponNames 252/256). The 41 impact tables would not fit (222 + 41 > 256): skipped.
+- Result: the engine walks CONNECTED → NEW → PRESPAWN → SPAWN. Next is the snapshot (svc_Snapshot, S3 40).
+
+## Crashes fixed (2026-10-26)
+
+- **Client from `launch_client_dx12.bat`**: exited 9 s in, `Failed to load playlists` (fatal) -- the `.bat` passes
+  `-playlistFile playlists_r5_patch.txt`, which the S30 depot does not have. `deploy_s30_client.ps1` now copies the
+  dedi's `platform/playlists_r5_patch.txt`.
+- **Dedi ~1 s after `ready`** (every time with `+launchplaylist survival_firingrange`, about 1 in 6 with `+map`): a
+  return to address 0 on the main thread with a zeroed stack. Bisected through the staging area scripts to the firing
+  range vending machine: `prop_loot_grabber` with the death box model (`mdl/props/death_box/death_box_01.rmdl`,
+  `SOLID_VPHYSICS`) set to `MOVETYPE_FLY`; the loot bin model crashed the same way, a raised (out of contact) death
+  box did not. The death box `.rmdl` collision and `.phy` are sound (`.phy` byte-identical to S21's except the
+  checksum) and so is the world BVH (lumps 0x12/0x13 byte-identical to the S30 source, same child types as the S21
+  and S3 maps; no Apex map stores lump 0x14). The FLY sweep traces the static props around it: 184 converted models
+  -- the firing range loot mats under the vending machine among them, 44 props on this map -- had **no BVH nodes**.
+  rmdlconv sized the last collision part's node array from the smallest studiohdr offset past the blob; an empty
+  region keeps a stale offset (`projectile_rocket`'s `uiPanelOffset` lands 8 bytes into the collision model), so the
+  array became 0 bytes and the header pointed past the model. The S30 sources do have the nodes (all 2959 with
+  collision store exactly the nodes reachable from node 0, up to EOF). rmdlconv (`tools_src`, `rmdl_160.cpp`
+  `V160LastPartNodeBytes`) now sizes the array by walking the tree, which also drops the tail data that used to ride
+  along (the death box's ref animation, 14 bytes). `s30/tools/dedi_coll_gate.py` walks every converted model the way
+  the engine does and gates `dedi_paks.py models` (S21's 1981 shipped models pass; the old build failed 1349 of
+  3300). With the paks rebuilt and FLY restored: 3/3 firing range and 4/4 `+map` starts stay up.
+
+## Step 5: after SPAWN (2026-10-26)
+
+- **Mod policy kick.** Right after SPAWN the dedi's mod policy gate (`mod_policy_gate.cpp`, `sv_modPolicy 1`) read
+  the client's `sdk_mods` userinfo, failed to parse the bridge's bare `-` and disconnected the client
+  (`#SDK_MODS_POLICY`), so no snapshot ever came. The value is `<ids>#<FNV-1a 64 of ids>` (`ModSystem_ParseAttestation`);
+  the S30 client loads no SDK mods: `-#af63a04c86018698`. The dedi now logs `[MOD-POLICY] accept slot=0`.
+- **The first snapshot is a DataBlock.** The dedi paces bridge clients (`[FULL-PACE]`): one NoDelta FULL, then
+  keepalive until the client acks that tick (30 s safety release). The FULL arrives as a DataBlock transfer
+  (ServerTick 22, S3 13, svc_Snapshot 40), not as split netchan packets (none arrive; S30's own split reassembly,
+  `NET_ReceiveSplit` 0x2A5650, takes S3's layout with split size 564..1188). The bridge dispatches a DataBlock only
+  with the next netchan packet, and the dedi sends none while it waits for the ack: the snapshot is never dispatched.
+- **pdef.** S30's client scripts register stats for S30's seasons, ranked periods and S30-only stat structs. The
+  dedi's pdef got S30's enum members (see docs/10: per-mode stats trimmed to the playlists' modes to stay under 26,000
+  entries). The S30-only structs do not fit the dedi parser's 40 struct types; the dedi's scripts never write them, so
+  `bridge_persistence_s30.cpp` gives `PersistenceGetVarHandle` (0xC58BF0) a dummy handle for names the pdef lacks
+  (the handle is only stored, `sh_stats_internals.gnut` 1430) and logs each as `[PDEF-MISSING]` (console: one line per
+  path). First run: 121 names in `stats.arena_seasons`, `characterClasses`, `rankedEventPeriods`,
+  `narrativechallenge`. To revisit with the dedi's struct cap.
+- Result: the client loads into the Firing Range loading screen with no script error and waits for the snapshot.
+
+## Step 6: the first snapshot (2026-10-26)
+
+| | S30.1 |
+|---|---|
+| snapshot message | type 50 (216 bytes, vtable 0x17F24D8): reader 0x48AD70, Process 0x2F9280. S21's is type 47 (reader 0x44BD80, the SDK's `SvcSnapshotReadFromBuffer`); the 552-byte class registered next to it (S30 53, S21 50) reads a 64-bit value and a string (the S21 bridge's `SvcSnapshotWrongReader` matches S30 0x474410) |
+| header | the S21 reader's: ServerTickInfo helper (S21 0x446700, S30 0x4858E0: same field stores, the last 32-bit read only laid out differently), then the same 26 reads (15, 14, 24-bit widths) and a seek past the entity payload |
+| UpdateStringTable | S30 17 = S21 16 ([5 id][1 many][16 count][20 length]), passed through |
+| `CopyNewEntity` create call | 0x2EF0B4: `call [ClientClass +0](entnum, serial)` through the server-class table |
+
+- A completed DataBlock queues a 16-byte wake datagram for the engine socket; the ProcessPacket detour dispatches the
+  DataBlock for it on the engine thread (the dedi sends no netchan packet while it holds the FULL).
+- S3 40 is re-encoded as the S21 bridge does (ServerTickInfo 137 → 152 bits, length 22 → 24) and run as S30 50;
+  every C2S packet then carries S3 clc_ClientTick (type 60, [32 tick][32 raw tick]) for the last processed tick.
+- Stub ClientClasses had no create function: the first snapshot called NULL (0x2EF0B4, entnum 883). They now borrow
+  `CInfoTarget`'s (+0 create, +8 create-event).
+- Result: `Snapshot #1 tick 562 full, 148700 payload bits, ok 1`; the dedi logs `[FULL-PACE] released slot=0:
+  client acked FULL tick=562 -- deltas resume`; the engine walks to signon 8 (FULL).
+- Then the **dedi** stops: on the player's match start its S21-era scripts index S30 data they do not know
+  (`sh_battlepass.gnut` 2190 `battlePassMap[pass]` for S30's active pass; `sh_items.gnut` 872
+  `guidItemFlavorMap[1600822881]` = `xp_boost/battlepass_season30_01`), "There was a problem processing game logic",
+  `CHostState::FrameUpdate: Shutdown host game`.
+- Client side, `GetPersistentVar` reads of S30-only vars still raise (UI `sh_inbox.gnut` 621 `inboxMessages[0].id`,
+  client `mastery_weapons[...].trial_list_v2[0].stat`): only `PersistenceGetVarHandle` gets a default so far.
+
+## Step 7: in game (2026-10-26)
+
+- Client: `GetPersistentVar` (0xC34940) / `GetPersistentVarAsInt` (0xC349E0) helpers check the name first (string
+  arg 2 via 0xF64F10, the interface lookup); a name the dedi's pdef lacks is logged `[PDEF-MISSING] ... read as 0`,
+  int 0 is pushed (0x3A8A40) and they return 1. First run: `inboxMessages[0..]` (UI), `mastery_weapons[...]
+  .trial_list_v2[...]`.
+- Dedi (S21-era scripts against S30 data; originals `.s21`):
+  - `platform/playlists_r5_patch.txt` Gamemodes defaults: `enable_battlepass 0` (S30's active pass is not in
+    `sh_battlepass.gnut`'s `battlePassMap`; the client gets the same file).
+  - `sh_perks.gnut`: role perks without a `PerkInfo` on the dedi (S30 perks 12, 18, 20) are left out and printed.
+  - `sh_passives.gnut`: the dedi's `ePassives` has 214 entries (S30 names added), the S3 engine 128 passive bits
+    (`CPlayer` `m_passives`, 2 x 64; "Passive N out of max range [0-128)"): `GivePassive` / `TakePassive` /
+    `PlayerHasPassive` ignore and print passives >= 128 (S30 character setup grants 195, 197), the `TakeAllPassives`
+    and DEV loops stop at 128.
+- Result: snapshots stream (586 S2C packets in 30 s, deltas acked), no script error on either side, and the client
+  is in the Firing Range spawn room with the HUD (`tests` screenshot in the session).
+- Open: C2S carries no `clc_Move` yet (the engine's own packets are dropped), so the player cannot move; S3 68 (an SDK
+  message) in reliable transfers has no handler and drops the rest of its transfer; TempEntities (S3 41) and
+  UserMessage (S3 37) are not bridged.
+
+## Step 8: input (2026-10-26)
+
+| | S30.1 |
+|---|---|
+| `ClWriteMoveCmds` | 0x2F5320 (S21 SDK signature): clc_Move on the stack (vtable `lea` at +0x5D: 0x17F0430), backup +0x20, new +0x24, bf_write +0x70 (current bit +0x80); first command against a reset command; sent with `CNetChan::SendNetMsg` 0x2A03D0 |
+| usercmd delta writer | client vtable 0x1891008 slot 31 → 0x8AB720 (thunk) → input vtable 0x18DC508 slot 6 → 0x9B5BA0 → `WriteUsercmd` 0xB9E820, reset 0xB9E560 (read from the running client: no RTTI names in the IDB) |
+| `WriteUsercmd` vs S21 | S21's order except: no spring roll, no impulse, weaponCustomActivity 12 bits (S21 11), the vector group after attack focus only written when focus is, a third vector group, a bit before frametime; normalized float (0xB9DD00), signed delta (0xB9DC80, N-bit two's complement) and reset values are S21's |
+| tick interval | ServerInfo `f11` = 0.05 |
+
+`bridge_usercmd_s30.cpp` hooks `SendNetMsg`; for the clc_Move vtable it parses each command in S30's format and emits
+the dedi's (the S21 bridge's `S21Bridge_EmitS3Cmd` with its default levers: real tick count, command time from the
+tick interval, ping remap, frametime restamp, energize/akimbo in impulse's top bits), and queues S3 clc_Move (46,
+[4 new][3 backup][16 bits]) for the next C2S packet (flushed at once). Every batch parses to exactly its bit count.
+The dedi drains the command queue (`[CMDQ] FIRST FIRE`); `+forward` for 2.5 s walked the player down the spawn
+corridor.
+
+S2C added: S3 68 (`net_ScriptMessage`, the dedi SDK's ScriptRemote lane) is consumed and its call names logged
+(`ServerToClient_OnPersistentDataReady`, `ServerCallback_YouRespawned`, `ServerCallback_UpdateHudWeaponData`, loadout
+and challenge updates, ...) -- run on the S30 VMs in step 9; S3 18 (`svc_FixAngle`) passed to S30 22 (same reader).
+
+## Step 9: server-to-client script calls (2026-10-26)
+`src/core_s30/bridge_scriptremote_s30.cpp` runs the S3 68 call frames on the S30 VMs, as S21's
+`S21Bridge_InjectScriptRemote` does:
+
+| S30.1 | |
+|---|---|
+| `0xF594F0` FindFunction(vm, name, signature, scope) | a null signature skips the type check (`0xF68A73`) |
+| `0xF597E0` ExecuteFunction(vm, hFunc, args, n, ret, scope) | engine callers pass a zeroed return variant, null scope |
+| ScriptVariant_t | 16 bytes, type int16 at +14: float 1, vector 3, int 5, bool 6, cstring 0x24, hscript 0x25 |
+| CLIENT / UI CSquirrelVM* | `0x4073D28` (loaded before `ClientCodeCallback_MapSpawn`), `0x400A490` (`UICodeCallback_RunHeadless`) |
+| `0xAD32B0` | stores a `Remote_RegisterClientFunction` / `Remote_RegisterUIFunction` registration: (this, hFunc, name, flags 2*bUI+1, schema, schema bytes, params); only caller `0xAD4864` |
+| schema (`0xAD3550`) | per param a type byte: float 1 / vector 3 + min, max, bits; int 5 + min, max; bool 6; entity 0x2A; typed_entity 0x2B + class; itemflavor 0x2C + kind + 1-2 ints. No string type |
+| entities | `GetEntityFromEncodedEHandle` `0xC0C5D0`: table `0x58D4A18`, 32-byte slots (entity, serial +8); `GetScriptInstance` `0xAC5150` |
+
+A script error on the CLIENT VM is fatal ("There was a problem processing game logic"), so a call only runs when it
+matches the S30 registration: name, param count, types (dedi entity/typed_entity 0x28/0x29 = S30 0x2A/0x2B) and the
+registered ranges. A mismatch is dropped and logged once per name and reason (`[SCRIPT-REMOTE] <name>: ... --
+dropped`). Calls wait for the snapshot tick they were stamped with (at most 64 snapshots), in order.
+
+Dedi script differences this found, fixed on the dedi (originals `.s21`):
+- Heal items: the S30 client reads them as its `eHealthPickupType` (ULTIMATE 7 after CLOCKUP_SYRINGE 5,
+  MED_WHEEL_CONSUMABLE_END 6; SHIELD_LARGE 2, SHIELD_SMALL 3), the dedi sent `eConsumableType.ULTIMATE` 5 and its
+  `eHealthPickupType` swapped the shields. `s30/tools/dedi_heal_enums.py` gives both dedi enums the S30 layout. The
+  dedi's note that autoplayers (bots, native `HealingItem`) depend on the first five keeps holding for
+  `eConsumableType`; the dedi `eHealthPickupType` shield order now follows S30.
+- `ServerToClient_AssignedChallengesDidChange`: S30 takes `bool didEventChallengesRefresh` and has no
+  `_FromEventsRefresh` twin. `sh_challenges.gnut` registers the bool and passes `false`, or `true` where it called the twin.
+
+Result: 33 calls run on connect (persistent data ready, loadout batches, respawn, HUD weapon data, charge times,
+ultimate ready, ...), no script errors, the client stays in game. Dropped: `FS_ByRef_ConsistencyCheck` (a Flowstate
+client script S30's client scripts do not have).
+
+## Step 10: the rest of the protocol (2026-10-26)
+Inventory and status in docs/13; specs in docs/14–16.
+- S2C: user messages (`bridge_usermessage`), TempEntities (S30 51), native passthrough of 14, 15, 17, 19, 20,
+  29–31, 33, chat lanes 67/70 and PlaylistChange 32 (`bridge_hud`). Stub ClientClasses keep a null create-event
+  function so dedi-only temp entities are skipped.
+- C2S (`bridge_c2s`): each message the engine sends is serialized with its own WriteToBuffer (body only; S30's
+  bf_write ORs bits into dwords, so the buffer starts zeroed) and queued in the bridge's C2S stream with the
+  dedi's dedupe sequences. Client script calls go by name; the dedi's server.dll got the matching receive path.
+- Activities: the dedi translates to S30 ids (`+bridge_client_activity_set s30`), the client translates the
+  queued player activity; weapon RNG seed matched (`bridge_cmdseed`).
+- Test helper: `sdk_script_call <client function>` runs a no-argument CLIENT VM function on the engine thread.
+
 ## Next
-The decoders have to tolerate unmatched props, as the S21 bridge's do: there the decoder builder skips them, the
-decoder gets a dummy RecvProp (`?_unmatched`, no-op proxy) instead of NULL, the WriteBlock paths skip writes for it,
-and unmatched arrays are consumed element by element with the wire decoders. S30's decode/WriteBlock path has to be
-mapped before porting that. Then PlaylistOverrides, UpdateStringTable, the snapshot.
+Still consumed without effect: 34 PlaylistOverrides, 69 DebugOverlay. Earlier list, kept for history: 37
+UserMessage (S21 maps ids), 41 TempEntities (S21 24-bit length bridge; stub TE classes have no create-event function),
+34 PlaylistOverrides, 44 DatatableChecksum. C2S: StringCmd (console commands), ClientSayText, SetConVar relays.

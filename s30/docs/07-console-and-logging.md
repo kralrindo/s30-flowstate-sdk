@@ -40,6 +40,20 @@ the UI VM exists, and its print pointer is the hooked 0xF5B2B0. In 40 s the UI s
 (counted on the native itself), so nothing prints in this state. Retail has no `script`/`script_ui` command to force a
 print, so the capture fires once scripts that print run (Flowstate's, later).
 
+## Script errors (2026-10-26)
+
+| | S30.1 | role |
+|---|---|---|
+| `sqstd_aux_printerror` | 0xF61690 | VM error handler: writes `SCRIPT ERROR: [VM] msg`, ` -> ` source line, `CALLSTACK`, `*FUNCTION [...]` lines, `LOCALS` in pieces through `*(table[vm] + 17024)`, then raises the error dialog (0xF5E230, `"%s #%d\n%s"`) |
+| error text callback, SERVER/CLIENT VMs | 0xF5B3B0 | `(vm, text)`: appends to the per-VM capture buffer (`0x147765560 + 0x2002 * vm`) only; installed at `+17024` by the VM setup (0xF575F0) |
+| error text callback, UI VM | 0xF5B420 | same, UI VM |
+
+Retail never logs this text; the dialog shows only the file, line and message. S21 sends the same text through its
+print callback (the SDK flags it as an error). client_s30 detours both S30 error callbacks, buffers the pieces per VM
+and logs whole lines as `[SCRIPT-ERROR][VM]` (console: fault colour), then forwards the text unchanged. Verified with
+the pdef mismatch: the full callstack (`BuildStatTemplateEnumKeyResolversRecursive` ... `ClientCodeCallback_MapSpawn`)
+and locals are in the log. The ` -> ` source line is empty (no script source on the client).
+
 ## Console
 
 `console_s30` opens a "R5F S30 Client" console window (skip it with `-s30_noconsole`). Engine, script and SDK lines

@@ -13,6 +13,15 @@
 // identical, so each signature reaches into the body where they diverge.
 // The S21 signature misses on S30: S21 has xor where S30 has mov r9, rbx.
 //
+// Script errors take another callback. The error handler (sqstd_aux_printerror,
+// S30.1 0xF61690) writes "SCRIPT ERROR: ...", the source line, CALLSTACK and
+// LOCALS in pieces through *(table[vm] + 17024), which the VM setup fills with
+//   0xF5B3B0  SERVER and CLIENT VMs
+//   0xF5B420  UI VM
+// (HSQUIRRELVM v, const char* text): they only append to the per-VM capture
+// buffer the error dialog reads. Retail logs none of it; S21 routes the same
+// text through its print callback, which the SDK flags as an error.
+//
 //=============================================================================//
 #include <windows.h>
 #include <cstdio>
@@ -88,8 +97,95 @@ static __int64 h_ScriptPrintUI(void* v, const char* pszFormat, ...)
 	return v_ScriptPrintUI(v, "%s", szText);
 }
 
+//-----------------------------------------------------------------------------
+// Script error text
+//-----------------------------------------------------------------------------
+typedef void (*ScriptErrorText_t)(void* v, const char* pszText);
+
+static const char* const s_pszPatternErrorClient =
+	"0F B6 41 14 4C 8D 15 ?? ?? ?? ?? 4C 69 C8 02 20 00 00 43 80 BC 11 00 20 00 00 00 74 ?? 48 85 D2";
+static const char* const s_pszPatternErrorUI =
+	"0F B6 41 14 4C 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 8B 04 C1 0F B6 88 08 43 00 00 4C 69 C9 02 20 00 00 "
+	"43 80 BC 11 00 20 00 00 00 74";
+
+static ScriptErrorText_t v_ScriptErrorClient = nullptr;
+static ScriptErrorText_t v_ScriptErrorUI = nullptr;
+
+// The handler writes a line in several calls; lines are logged whole, per VM.
+struct ScriptErrorLine_t
+{
+	SRWLOCK lock = SRWLOCK_INIT;
+	char szLine[2048] = {};
+	size_t nLen = 0;
+};
+static ScriptErrorLine_t s_errorLines[3]; // SERVER, CLIENT, UI
+
+static void ScriptError_Append(int nVM, const char* pszVM, const char* pszText)
+{
+	ScriptErrorLine_t& line = s_errorLines[nVM];
+	AcquireSRWLockExclusive(&line.lock);
+	for (const char* p = pszText; *p; ++p)
+	{
+		if (*p != '\n' && line.nLen < sizeof(line.szLine) - 1)
+		{
+			line.szLine[line.nLen++] = *p;
+			continue;
+		}
+		if (*p != '\n')
+			continue; // overlong line: the rest up to its newline is cut
+		line.szLine[line.nLen] = '\0';
+		S30LogFile("[SCRIPT-ERROR][%s] %s\n", pszVM, line.szLine);
+		char szConsole[2100];
+		snprintf(szConsole, sizeof(szConsole), "[%s] %s\n", pszVM, line.szLine);
+		S30Console_Write(szConsole, S30ConsoleColor_t::FAULT);
+		line.nLen = 0;
+	}
+	ReleaseSRWLockExclusive(&line.lock);
+}
+
+static void h_ScriptErrorClient(void* v, const char* pszText)
+{
+	const unsigned char nVM = *(reinterpret_cast<const unsigned char*>(v) + 0x14);
+	if (pszText)
+		ScriptError_Append(nVM == 0 ? 0 : 1, nVM == 0 ? "SERVER" : nVM == 1 ? "CLIENT" : "VM?", pszText);
+	v_ScriptErrorClient(v, pszText);
+}
+
+static void h_ScriptErrorUI(void* v, const char* pszText)
+{
+	if (pszText)
+		ScriptError_Append(2, "UI", pszText);
+	v_ScriptErrorUI(v, pszText);
+}
+
+static void ScriptPrint_HookErrorText(void)
+{
+	int nMatchesClient = 0;
+	int nMatchesUI = 0;
+	v_ScriptErrorClient = reinterpret_cast<ScriptErrorText_t>(S30Pattern_FindUnique(s_pszPatternErrorClient, &nMatchesClient));
+	v_ScriptErrorUI = reinterpret_cast<ScriptErrorText_t>(S30Pattern_FindUnique(s_pszPatternErrorUI, &nMatchesUI));
+	if (!v_ScriptErrorClient || !v_ScriptErrorUI)
+	{
+		S30Log("[SCRIPT-PRINT] error callbacks unresolved (client matches=%d, ui matches=%d) -- script errors not captured\n",
+			nMatchesClient, nMatchesUI);
+		return;
+	}
+	const uintptr_t nClientRva = S30Pattern_Rva(reinterpret_cast<void*>(v_ScriptErrorClient));
+	const uintptr_t nUIRva = S30Pattern_Rva(reinterpret_cast<void*>(v_ScriptErrorUI));
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+	DetourAttach(&reinterpret_cast<PVOID&>(v_ScriptErrorClient), h_ScriptErrorClient);
+	DetourAttach(&reinterpret_cast<PVOID&>(v_ScriptErrorUI), h_ScriptErrorUI);
+	const LONG nError = DetourTransactionCommit();
+	S30Log("[SCRIPT-PRINT] error text client/server @ 0x%llX, UI @ 0x%llX %s (commit %ld)\n",
+		static_cast<unsigned long long>(nClientRva), static_cast<unsigned long long>(nUIRva),
+		nError == NO_ERROR ? "hooked" : "FAILED", nError);
+}
+
 bool S30ScriptPrint_Install(void)
 {
+	ScriptPrint_HookErrorText();
+
 	int nMatchesClient = 0;
 	int nMatchesUI = 0;
 	v_ScriptPrintClient = reinterpret_cast<ScriptPrint_t>(S30Pattern_FindUnique(s_pszPatternPrintClient, &nMatchesClient));
