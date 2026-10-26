@@ -158,6 +158,12 @@ constexpr uint32_t BRIDGE_S2C_SCRIPTREMOTE_MAGIC = 0x53523244u;
 constexpr uint32_t BRIDGE_S2C_MANTLEBOOST_MAGIC = 0x3156424Du;
 
 constexpr int BRIDGE_S2C_SCRIPTREMOTE_MAX_NAME_LEN = 64;
+
+// C->S name-carried call (S30 client bridge, s30/docs/15) on the untyped lane:
+// [u32 magic][u32 relSeq][u8 nameLen][name][u8 argc] then per arg [u8 tag][value]:
+// 1 float f32, 3 vector 3xf32, 5 int i32, 6 bool u8, 40/41 entity u32 EHandle, 42 itemflavor i32.
+// The client registers server functions in its own order, so they go by name.
+constexpr uint32_t BRIDGE_C2S_SCRIPTREMOTE_MAGIC = 0x53523243u;
 constexpr int BRIDGE_S2C_SCRIPTREMOTE_MAX_ARGS = 16;
 constexpr int BRIDGE_S2C_SCRIPTREMOTE_MAX_STRING_LEN = 255;
 

@@ -417,6 +417,184 @@ bool ScriptRemoteServer_ProcessMessage(CClient* pClient, NET_ScriptMessage* pMsg
 }
 
 //=============================================================================//
+// Name-carried C2S calls (S30 client bridge): the client's own registration order
+// differs from this dedi's, so the call arrives by name with plain values. They are
+// encoded with this dedi's registration and run through the typed path above, which
+// keeps its rate limit, deny list, range and entity-class checks and SCRIPT_ERROR
+// containment. The sequence is deduped here; the re-encoded payload carries 0.
+//=============================================================================//
+static ConVar sv_scriptremote_c2s_named("sv_scriptremote_c2s_named", "1", FCVAR_RELEASE,
+	"Accept name-carried client->server remote calls (S30 client bridge). 0 = drop them.");
+
+bool ScriptRemoteServer_ProcessNamedMessage(CClient* pClient, NET_ScriptMessage* pMsg, const uint8_t* pFrame, int nBytes)
+{
+	if (!pClient || !pMsg || !pFrame || nBytes <= 0 || nBytes > NET_ScriptMessage::SCRIPT_MESSAGE_BUFFER_SIZE)
+		return false;
+	if (!sv_scriptremote_c2s_named.GetBool())
+		return false;
+	if (!pClient->IsActive())
+	{
+		Warning(eDLL_T::SERVER, "[C2S-SR] named call from inactive client #%d -- dropped\n", pClient->GetUserID());
+		return false;
+	}
+
+	int off = 0;
+	auto take = [&](void* pDst, int n) -> bool
+	{
+		if (n < 0 || off + n > nBytes)
+			return false;
+		memcpy(pDst, pFrame + off, n);
+		off += n;
+		return true;
+	};
+
+	uint32_t nMagic = 0, nRelSeq = 0;
+	uint8_t nNameLen = 0, nArgs = 0;
+	char szName[BRIDGE_S2C_SCRIPTREMOTE_MAX_NAME_LEN + 1] = {};
+	if (!take(&nMagic, 4) || nMagic != BRIDGE_C2S_SCRIPTREMOTE_MAGIC || !take(&nRelSeq, 4) || !take(&nNameLen, 1)
+		|| nNameLen == 0 || nNameLen > BRIDGE_S2C_SCRIPTREMOTE_MAX_NAME_LEN || !take(szName, nNameLen) || !take(&nArgs, 1))
+	{
+		Warning(eDLL_T::SERVER, "[C2S-SR] named call header invalid (client #%d) -- rejected\n", pClient->GetUserID());
+		return false;
+	}
+	for (int i = 0; i < nNameLen; ++i)
+	{
+		if (szName[i] < 32 || szName[i] > 126)
+		{
+			Warning(eDLL_T::SERVER, "[C2S-SR] named call name not printable (client #%d) -- rejected\n", pClient->GetUserID());
+			return false;
+		}
+	}
+
+	if (nRelSeq != 0)
+	{
+		CClientExtended* const pExt = pClient->GetClientExtended();
+		if (pExt && !pExt->AcceptBridgeRelSeq(nRelSeq))
+			return true; // a redundant copy
+	}
+
+	const ScriptRemoteFuncDesc_t* const pFunc = ScriptRemoteServer_FindFunction(szName);
+	if (!pFunc)
+	{
+		Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s' is not a registered server function (client #%d) -- rejected\n",
+			szName, pClient->GetUserID());
+		return false;
+	}
+	if (nArgs != pFunc->nParamCount)
+	{
+		Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s': %u args, this server registers %d (client #%d) -- rejected\n",
+			szName, nArgs, pFunc->nParamCount, pClient->GetUserID());
+		return false;
+	}
+
+	uint8_t payload[NET_ScriptMessage::SCRIPT_MESSAGE_BUFFER_SIZE];
+	bf_write out("named_c2s", payload, sizeof(payload));
+	out.WriteUBitLong(pFunc->nIndex, SCRIPT_REMOTE_FUNC_INDEX_BITS);
+	out.WriteUBitLong(0, 31);
+	out.WriteOneBit(0);
+
+	for (int i = 0; i < pFunc->nParamCount; ++i)
+	{
+		const ScriptRemoteParamDesc_t& desc = pFunc->params[i];
+		uint8_t nTag = 0;
+		if (!take(&nTag, 1))
+			break;
+		bool bOk = false;
+		switch (desc.type)
+		{
+		case ScriptRemoteParamType_e::SRP_INT:
+		case ScriptRemoteParamType_e::SRP_ITEMFLAVOR:
+		{
+			int32_t v = 0;
+			bOk = (nTag == 5 || nTag == 42) && take(&v, 4);
+			if (!bOk)
+				break;
+			if (desc.type == ScriptRemoteParamType_e::SRP_ITEMFLAVOR)
+			{
+				out.WriteLong(v);
+				break;
+			}
+			if (v < desc.intMin || v > desc.intMax)
+			{
+				Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s' arg %d = %d outside [%d, %d] -- rejected\n",
+					szName, i, v, desc.intMin, desc.intMax);
+				return false;
+			}
+			out.WriteUBitLong(static_cast<uint32_t>(v - desc.intMin), ScriptRemote_IntBitsForRange(desc.intMin, desc.intMax));
+			break;
+		}
+		case ScriptRemoteParamType_e::SRP_BOOL:
+		{
+			uint8_t b = 0;
+			bOk = nTag == 6 && take(&b, 1);
+			if (bOk)
+				out.WriteOneBit(b ? 1 : 0);
+			break;
+		}
+		case ScriptRemoteParamType_e::SRP_FLOAT:
+		case ScriptRemoteParamType_e::SRP_VECTOR:
+		{
+			const bool bVector = desc.type == ScriptRemoteParamType_e::SRP_VECTOR;
+			float v[3] = {};
+			bOk = nTag == (bVector ? 3 : 1) && take(v, bVector ? 12 : 4);
+			for (int k = 0; k < (bVector ? 3 : 1) && bOk; ++k)
+			{
+				if (!std::isfinite(v[k]))
+				{
+					bOk = false;
+					break;
+				}
+				if (desc.floatBits >= 32)
+				{
+					out.WriteFloat(v[k]);
+					continue;
+				}
+				if (v[k] < desc.floatMin || v[k] > desc.floatMax)
+				{
+					Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s' arg %d = %f outside [%f, %f] -- rejected\n",
+						szName, i, v[k], desc.floatMin, desc.floatMax);
+					return false;
+				}
+				const uint32_t nMaxQ = (1u << desc.floatBits) - 1;
+				out.WriteUBitLong(static_cast<uint32_t>((v[k] - desc.floatMin) / (desc.floatMax - desc.floatMin) * nMaxQ + 0.5f),
+					desc.floatBits);
+			}
+			break;
+		}
+		case ScriptRemoteParamType_e::SRP_ENTITY:
+		case ScriptRemoteParamType_e::SRP_TYPED_ENTITY:
+		{
+			uint32_t eh = 0;
+			bOk = (nTag == 40 || nTag == 41) && take(&eh, 4);
+			if (bOk)
+				out.WriteLong(static_cast<int32_t>(eh));
+			break;
+		}
+		default:
+			break;
+		}
+		if (!bOk)
+		{
+			Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s' arg %d: tag %u does not match type %d -- rejected\n",
+				szName, i, nTag, static_cast<int>(desc.type));
+			return false;
+		}
+	}
+	if (off != nBytes || out.IsOverflowed())
+	{
+		Warning(eDLL_T::SERVER, "[C2S-SR] named call '%s': %d of %d frame bytes used -- rejected\n", szName, off, nBytes);
+		return false;
+	}
+
+	if (sv_scriptremote_c2s_log.GetBool())
+		Msg(eDLL_T::SERVER, "[C2S-SR] named '%s' -> index %u, %d args (client #%d)\n",
+			szName, pFunc->nIndex, pFunc->nParamCount, pClient->GetUserID());
+
+	pMsg->m_DataIn.StartReading(payload, (out.GetNumBitsWritten() + 7) >> 3, 0, out.GetNumBitsWritten());
+	return ScriptRemoteServer_ProcessMessage(pClient, pMsg);
+}
+
+//=============================================================================//
 // Dual-path: original first, then forward on the S2C lane when enabled.
 //=============================================================================//
 

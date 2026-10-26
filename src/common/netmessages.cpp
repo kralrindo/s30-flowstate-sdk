@@ -585,12 +585,23 @@ bool NET_ScriptMessage::Process(void)
 	}
 	else
 	{
-		if (m_DataIn.GetNumBitsLeft() >= 48)
+		const int nFrameBits = m_DataIn.GetNumBitsLeft();
+		if (nFrameBits >= 32)
 		{
 			const uint32_t magic = m_DataIn.ReadUBitLong(32);
-			const unsigned nRttMs = m_DataIn.ReadUBitLong(16);
-			if (magic == 0x31545242u && nRttMs <= 2000 && m_pMessageHandler)
-				BridgeLatency_OnClientReport(static_cast<CClient*>(m_pMessageHandler), nRttMs);
+			if (magic == BRIDGE_C2S_SCRIPTREMOTE_MAGIC)
+			{
+				// Name-carried client->server call (S30 client bridge); the frame is m_Buffer from byte 0.
+				if (m_pMessageHandler && !ScriptRemoteServer_ProcessNamedMessage(static_cast<CClient*>(m_pMessageHandler),
+					this, reinterpret_cast<const uint8_t*>(m_Buffer), nFrameBits / 8))
+					Warning(eDLL_T::SERVER, "NET_ScriptMessage: named call not processed\n");
+			}
+			else if (magic == 0x31545242u && m_DataIn.GetNumBitsLeft() >= 16)
+			{
+				const unsigned nRttMs = m_DataIn.ReadUBitLong(16);
+				if (nRttMs <= 2000 && m_pMessageHandler)
+					BridgeLatency_OnClientReport(static_cast<CClient*>(m_pMessageHandler), nRttMs);
+			}
 		}
 	}
 	return true;

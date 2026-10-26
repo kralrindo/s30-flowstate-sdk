@@ -44,6 +44,7 @@ add_sources( SOURCE_GROUP "Activity"
     # DEDI server activity xlat (S3 ordinals -> S21)
     "shared/activity_s3_to_s21.h"
     "shared/activity_s21_enum.h"
+    "shared/activity_s30_enum.h"
     # CLIENT activity xlat
     "shared/activity_s3_to_s21_client.cpp"
     "shared/activity_s3_to_s21_client.h"

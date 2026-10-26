@@ -26,6 +26,9 @@ class CClient;
 class NET_ScriptMessage;
 
 bool ScriptRemoteServer_ProcessMessage(CClient* pClient, NET_ScriptMessage* pMsg);
+// A BRIDGE_C2S_SCRIPTREMOTE_MAGIC frame (untyped): resolved by name, re-encoded with this
+// dedi's registration and run through ScriptRemoteServer_ProcessMessage.
+bool ScriptRemoteServer_ProcessNamedMessage(CClient* pClient, NET_ScriptMessage* pMsg, const uint8_t* pFrame, int nBytes);
 void ScriptRemoteC2S_DropFnCache(void);
 void ScriptRemoteC2S_LevelShutdown(void);
 

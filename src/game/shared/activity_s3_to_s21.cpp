@@ -11,6 +11,7 @@
 #include "activity.h"
 #include "activity_s3_to_s21.h"
 #include "activity_s21_enum.h"
+#include "activity_s30_enum.h"
 #include <string.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -47,6 +48,13 @@ static ConVar bridge_act_xlat_unmapped("bridge_act_xlat_unmapped", "1", FCVAR_RE
 //-----------------------------------------------------------------------------
 // Purpose: id<=0 is already "no activity" -- pass through, do not rewrite.
 //-----------------------------------------------------------------------------
+// Which client's activity numbering the map targets. Read once, when the map is
+// built (host-state init), so it is a launch setting: +bridge_client_activity_set s30.
+// The S30.1 client (s30/docs/14) registers its own list (0xAA11C0); matched by name
+// the same way as S21's.
+static ConVar bridge_client_activity_set("bridge_client_activity_set", "s21", FCVAR_RELEASE,
+	"Client activity numbering the dedi translates to: s21 (default) or s30. Launch setting.");
+
 static inline int Activity_Unmapped(const int id)
 {
 	if (id <= 0)
@@ -100,18 +108,22 @@ void Bridge_BuildS3ToS21ActivityMap()
 	for (int i = 0; i < kS21MapSize; ++i)
 		s_s21ToS3[i] = -1;
 
+	const bool bS30 = V_stricmp(bridge_client_activity_set.GetString(), "s30") == 0;
+	const S21ActivityEntry* const pClientTable = bS30 ? kS30Activities : kS21Activities;
+	const int nClientCount = bS30 ? kS30ActivityCount : kS21ActivityCount;
+
 	// Duplicate names would make emplace keep the first id and mis-map later use.
 	std::unordered_map<std::string, int> s21ByName;
-	s21ByName.reserve(kS21ActivityCount * 2);
+	s21ByName.reserve(nClientCount * 2);
 	int dupNames = 0;
-	for (int j = 0; j < kS21ActivityCount; ++j)
+	for (int j = 0; j < nClientCount; ++j)
 	{
-		if (!s21ByName.emplace(kS21Activities[j].name, kS21Activities[j].id).second)
+		if (!s21ByName.emplace(pClientTable[j].name, pClientTable[j].id).second)
 		{
 			++dupNames;
 			Warning(eDLL_T::ENGINE,
-				"[ACT-XLAT] embedded S21 table has duplicate name '%s' (id %d kept, %d dropped)\n",
-				kS21Activities[j].name, s21ByName[kS21Activities[j].name], kS21Activities[j].id);
+				"[ACT-XLAT] embedded client table has duplicate name '%s' (id %d kept, %d dropped)\n",
+				pClientTable[j].name, s21ByName[pClientTable[j].name], pClientTable[j].id);
 		}
 	}
 
@@ -164,9 +176,9 @@ void Bridge_BuildS3ToS21ActivityMap()
 	// directions so a reverse hole shows up in the boot log even while nothing
 	// consumes it yet.
 	int revMissing = 0;
-	for (int j = 0; j < kS21ActivityCount; ++j)
+	for (int j = 0; j < nClientCount; ++j)
 	{
-		const int id = kS21Activities[j].id;
+		const int id = pClientTable[j].id;
 		if (id > 0 && id < kS21MapSize && s_s21ToS3[id] < 0)
 			++revMissing;
 	}
@@ -177,9 +189,9 @@ void Bridge_BuildS3ToS21ActivityMap()
 	s_ready = true;
 
 	Msg(eDLL_T::ENGINE,
-		"[ACT-XLAT] S3->S21 activity map built: %d mapped, %d unmapped, %d invalid-slot "
-		"(S3 max=%d, S21 table=%d entries)\n",
-		mapped, unmapped, invalid, s3Max, kS21ActivityCount);
+		"[ACT-XLAT] S3->%s activity map built: %d mapped, %d unmapped, %d invalid-slot "
+		"(S3 max=%d, client table=%d entries)\n",
+		bS30 ? "S30" : "S21", mapped, unmapped, invalid, s3Max, nClientCount);
 	Msg(eDLL_T::ENGINE,
 		"[ACT-XLAT] reverse S21->S3: %d S21 activities have no S3 source, %d collision(s); "
 		"unmapped policy=%s\n",

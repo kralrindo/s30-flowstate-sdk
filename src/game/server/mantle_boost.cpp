@@ -4,6 +4,12 @@
 // TraversalFinished -- its caller overwrites origin and exit velocity after
 // return. Client twin must match ConVar defaults by hand.
 //
+// S30.1 client (s30/docs/19): its native C_GameMovement::TraversalMove (0xB12580)
+// predicts the boost only when the player settings say canMantleBoost, which every
+// S30 legend gets from the class mod "enable_mantle_boost" alone (base false); the
+// mod also sets mantleBoostJumpHeight 56 and mantleBoostSprintSpeedMultiplier 1.5.
+// The defaults below and the class-mod gate follow that.
+//
 //=============================================================================//
 #include "core/stdafx.h"
 
@@ -64,6 +70,9 @@ static constexpr ptrdiff_t MB_PLAYER_OFF_TIMELASTLANDED   = 25116;  // last-land
 static constexpr ptrdiff_t MB_PLAYER_OFF_GRAPPLE_ACTIVE    = 26552;  // bool m_grappleActive
 static constexpr ptrdiff_t MB_PLAYER_OFF_GRAPPLE_POINTS    = 26492;  // int m_grapple.m_grapplePointCount
 static constexpr ptrdiff_t MB_PLAYER_OFF_GRAPPLE_ATTACHED  = 26496;  // bool m_grapple.m_grappleAttached
+static constexpr ptrdiff_t MB_PLAYER_OFF_SETTINGS         = 0x5DF0; // player settings asset handle (entity_script_ext.cpp)
+static constexpr ptrdiff_t MB_PLAYER_OFF_CLASSMODS        = 0x5EF8; // m_classModsActive (entity_script_ext.cpp)
+static constexpr uint64_t  MB_CLASSMOD_COUNT              = 64;     // m_classModsActive bits
 
 //-----------------------------------------------------------------------------
 // Engine function pointers.
@@ -72,6 +81,7 @@ static char (*v_CGameMovement__TraversalMove)(void* ctx, char justStarted) = nul
 static char (*v_CGameMovement__Jump)(void* ctx) = nullptr;
 static char (*v_CGameMovement__Duck)(void* ctx) = nullptr;
 static float (*v_CPlayer__GetPoseSpeed_Sprint)(CPlayer* player, int nPose) = nullptr;
+static bool (*v_PlayerSettings_FindModIndex)(uint64_t hSettings, const char* pszMod, uint64_t* pIndex) = nullptr;
 
 //-----------------------------------------------------------------------------
 // Tunables. Client twin must register the same names and defaults.
@@ -100,11 +110,17 @@ static ConVar mantle_boost_min_valid_traversal_frac("mantle_boost_min_valid_trav
 	"Must match the client-side default.");
 static ConVar bridge_mantle_boost_exit_speed("bridge_mantle_boost_exit_speed", "260", FCVAR_RELEASE,
 	"[MANTLE-BOOST] Base horizontal exit speed (u/s). State 4 multiplies by sprint_mult.");
-static ConVar bridge_mantle_boost_sprint_mult("bridge_mantle_boost_sprint_mult", "1.3", FCVAR_RELEASE,
-	"[MANTLE-BOOST] Exit-speed multiplier on full boost (state 4). Must match the client-side default.");
-static ConVar bridge_mantle_boost_jump_height("bridge_mantle_boost_jump_height", "90", FCVAR_RELEASE,
-	"[MANTLE-BOOST] Jump height (u) for state-4 forced Jump (sqrt(2*gravity*height)). "
-	"State 3 keeps player_jumpHeight (56).");
+static ConVar bridge_mantle_boost_sprint_mult("bridge_mantle_boost_sprint_mult", "1.5", FCVAR_RELEASE,
+	"[MANTLE-BOOST] Exit-speed multiplier on full boost (state 4). S30: mantleBoostSprintSpeedMultiplier "
+	"of the enable_mantle_boost class mod (1.5, every legend).");
+static ConVar bridge_mantle_boost_jump_height("bridge_mantle_boost_jump_height", "56", FCVAR_RELEASE,
+	"[MANTLE-BOOST] Jump height (u) for state-4 forced Jump (sqrt(2*gravity*height)). S30: mantleBoostJumpHeight "
+	"of the enable_mantle_boost class mod (56, every legend). State 3 keeps player_jumpHeight (56).");
+static ConVar mantle_boost_require_class_mod("mantle_boost_require_class_mod", "1", FCVAR_RELEASE,
+	"[MANTLE-BOOST] Boost only players whose m_classModsActive holds bridge_mantle_boost_class_mod, as the S30 "
+	"client's canMantleBoost (set by that mod alone). 0 = every player (S21 behaviour).");
+static ConVar bridge_mantle_boost_class_mod("bridge_mantle_boost_class_mod", "enable_mantle_boost", FCVAR_RELEASE,
+	"[MANTLE-BOOST] Player settings class mod that grants the boost (mantle_boost_require_class_mod).");
 static ConVar bridge_mantle_boost_gravity("bridge_mantle_boost_gravity", "750", FCVAR_RELEASE,
 	"[MANTLE-BOOST] Fallback gravity for the state-4 vz solve, used only if sv_gravity fails to resolve. "
 	"Real Jump reads sv_gravity directly ( JumpHeightToVelocity) -- this is a safety net, not the primary source.");
@@ -171,6 +187,47 @@ static int MantleBoost_ActivationButtonMask(const CPlayer* const player)
 		return MantleBoost_GetClientConVarInt(player, "bridge_mantle_boost_button_mask",
 			bridge_mantle_boost_button_mask.GetInt());
 	return MantleBoost_MaskFromSetting(setting);
+}
+
+//-----------------------------------------------------------------------------
+// S30 canMantleBoost: the player's settings carry the boost class mod. A class
+// whose settings do not define the mod cannot boost (S30 base value false).
+//-----------------------------------------------------------------------------
+static bool MantleBoost_HasClassMod(const CPlayer* const player)
+{
+	if (!mantle_boost_require_class_mod.GetBool())
+		return true;
+	if (!v_PlayerSettings_FindModIndex)
+	{
+		static bool s_bWarned = false;
+		if (!s_bWarned)
+		{
+			s_bWarned = true;
+			Warning(eDLL_T::SERVER, "[MANTLE-BOOST] PlayerSettings_FindModIndex unresolved -- class-mod gate off, "
+				"every player can boost\n");
+		}
+		return true;
+	}
+	const uint8_t* const p = reinterpret_cast<const uint8_t*>(player);
+	const uint64_t hSettings = *reinterpret_cast<const uint64_t*>(p + MB_PLAYER_OFF_SETTINGS);
+	if (!hSettings)
+		return false;
+
+	// One settings asset at a time per lookup; the mod list is a string search.
+	static uint64_t s_hCached = 0;
+	static uint64_t s_nCachedIndex = MB_CLASSMOD_COUNT;
+	if (hSettings != s_hCached)
+	{
+		uint64_t nIndex = MB_CLASSMOD_COUNT;
+		if (!v_PlayerSettings_FindModIndex(hSettings, bridge_mantle_boost_class_mod.GetString(), &nIndex))
+			nIndex = MB_CLASSMOD_COUNT;
+		s_hCached = hSettings;
+		s_nCachedIndex = nIndex;
+	}
+	if (s_nCachedIndex >= MB_CLASSMOD_COUNT)
+		return false;
+	const uint64_t nMods = *reinterpret_cast<const uint64_t*>(p + MB_PLAYER_OFF_CLASSMODS);
+	return (nMods & (1ull << s_nCachedIndex)) != 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -767,8 +824,9 @@ static char Hook_CGameMovement_TraversalMove(void* ctx, char justStarted)
 			reinterpret_cast<uintptr_t>(player) + MB_PLAYER_OFF_TRAVERSAL_STATE) == 11)
 		s.m_nState = 1;
 
+	// S30 decides only with canMantleBoost (the class mod); without it the climb never latches.
 	uint8_t* const mvTrig = *reinterpret_cast<uint8_t**>(reinterpret_cast<uintptr_t>(ctx) + MB_CTX_OFF_MOVEDATA);
-	if (!justStarted && mvTrig && s.m_nState == 0)
+	if (!justStarted && mvTrig && s.m_nState == 0 && MantleBoost_HasClassMod(player))
 		MantleBoost_EvaluateTrigger(player, mvTrig, s, slot);
 
 	// A decided climb (>=3) must not jump off: past the mid frac a jump press stamps
@@ -841,6 +899,7 @@ void VMantleBoostBridge::GetAdr(void) const
 	LogFunAdr("CGameMovement::Jump", v_CGameMovement__Jump);
 	LogFunAdr("CGameMovement::Duck", v_CGameMovement__Duck);
 	LogFunAdr("CPlayer::GetPoseSpeed_Sprint", v_CPlayer__GetPoseSpeed_Sprint);
+	LogFunAdr("PlayerSettings_FindModIndex (mantle boost)", v_PlayerSettings_FindModIndex);
 }
 
 void VMantleBoostBridge::GetFun(void) const
@@ -863,6 +922,15 @@ void VMantleBoostBridge::GetFun(void) const
 	if (!v_CPlayer__GetPoseSpeed_Sprint)
 		Warning(eDLL_T::SERVER, "[MANTLE-BOOST] GetPoseSpeed_Sprint pattern unresolved -- "
 			"boost exit speed falls back to bridge_mantle_boost_exit_speed\n");
+
+	// Settings handle + mod name -> index into the settings' mod list (same function as
+	// entity_script_ext.cpp's AddPlayerClassMod).
+	Module_FindPattern(g_GameDll,
+		"48 89 74 24 10 57 44 8B D1 48 8B FA 41 81 E2 FF FF 03 00 48 8D 15")
+		.GetPtr(v_PlayerSettings_FindModIndex);
+	if (!v_PlayerSettings_FindModIndex)
+		Warning(eDLL_T::SERVER, "[MANTLE-BOOST] PlayerSettings_FindModIndex pattern unresolved -- "
+			"mantle_boost_require_class_mod cannot apply\n");
 
 	if (!v_CGameMovement__TraversalMove)
 		Warning(eDLL_T::SERVER, "[MANTLE-BOOST] CGameMovement::TraversalMove pattern unresolved -- mantle boost disabled\n");
