@@ -127,7 +127,33 @@
 - Result: CONNECTED -> NEW -> PRESPAWN on the dedi; pdef, playlists, ServerInfo, all string tables, SendTables and
   ClassInfo processed; CreateDecoders fails on 609 SendProps S30 does not have or types differently.
 
+### 2026-10-26: stage 2, steps 4-8: in game on the S3 dedi (docs/12)
+- Tolerant decoders and precache sync: signon reaches SPAWN, then FULL.
+- Physics crash root cause: rmdlconv dropped BVH nodes of the last collision part; fixed in the workspace clone,
+  `dedi_coll_gate.py` gates every converted model.
+- Snapshots: S3 40 re-encoded to S30 50 (header widths), first FULL from the DataBlock woken on the engine thread,
+  deltas acked through clc_ClientTick. The player spawns in game.
+- Input: S30 clc_Move transcoded to S3 46 (usercmd field order, tick/time restamp); the player walks.
+- Dedi data: pdef trimmed to the dedi's caps (modes, arenas out), battle pass off, S30-only persistent vars read as 0
+  with a log, S21-style script error logging on the client.
+
+### 2026-10-26: stage 2, steps 9-10: the rest of the protocol (docs/12, 13-17, 19)
+- Inventory of what the S21 client SDK does for the S3 dedi, with status per item (docs/13).
+- S2C: server-to-client script calls run on the S30 CLIENT/UI VMs, checked against S30's own registrations (a client
+  script error disconnects); user messages by handler name; TempEntities; native passthrough of the remaining
+  same-format messages; chat lanes; PlaylistChange applies the playlist by name.
+- C2S: the client's own messages (commands, SetConVar, chat, loot pickup, gamepad) serialized with their own writers
+  and relayed with the dedi's dedupe sequences. Client script calls go by name: S30 and the dedi number server
+  functions differently; the dedi's server.dll got a name-carried receive path (docs/15).
+- Dedi translates activities to S30's numbering (`+bridge_client_activity_set s30`), the client translates the
+  queued player activity (docs/14); weapon RNG seed derived the dedi's way.
+- Mantle boost stays S30-native (user decision): the dedi's boost now uses S30's values and class-mod gate (docs/19).
+- Dedi script fixes found on the way (originals `.s21`): heal-item numbering, challenges bool, abilities whose S30
+  classname comes from `weaponAsset` (Bloodhound/Fuse ultimates shut the game down).
+- mp_lobby: the S30 BSP is in the dedi's common VPK and reaches ready (docs/17); the S30 lobby menus need S30 playlist
+  schedules.
+- Verified in game: commands (say, noclip, give, infinite_ammo), script calls both ways, firing.
+
 ## Next action
-Stage 2, step 4: tolerant decoders, as the S21 bridge's (dummy RecvProp for unmatched props, WriteBlock skips it,
-unmatched arrays consumed per element); first map S30's decode/WriteBlock path. Then PlaylistOverrides,
-UpdateStringTable, the snapshot.
+Prop adapters for the S30 type changes (weapon mod bitfields, consumable counts, class mods, overheat), S30
+playlists from the client rpaks for the lobby menus, then a 10-minute session.

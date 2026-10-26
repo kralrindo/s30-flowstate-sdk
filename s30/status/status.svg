@@ -11,9 +11,9 @@
 <text x="200" y="116" fill="#ffffff" font-size="15" text-anchor="middle">verified</text>
 <text x="253" y="116" fill="#111111" font-size="15" text-anchor="middle">0.0%</text>
 <rect x="281" y="96" width="80" height="30" fill="#555b63"/>
-<rect x="361" y="96" width="40" height="30" fill="#d4a72c"/>
+<rect x="361" y="96" width="48" height="30" fill="#d4a72c"/>
 <text x="321" y="116" fill="#ffffff" font-size="15" text-anchor="middle">milestones</text>
-<text x="381" y="116" fill="#111111" font-size="15" text-anchor="middle">9/32</text>
+<text x="385" y="116" fill="#111111" font-size="15" text-anchor="middle">17/32</text>
 <text x="24" y="186" fill="#e6e6e6" font-size="17">SDK signatures on S30*: 37.1% (282/760)</text>
 <rect x="26.00" y="198.00" width="15.79" height="15.23" fill="#238636"><title>resolved  engine/client/bridge_flag_set.h:135  v_UIKeyHandler</title></rect>
 <rect x="42.79" y="198.00" width="15.79" height="15.23" fill="#238636"><title>resolved  engine/client/camo_index.h:34  </title></rect>
@@ -790,7 +790,7 @@
 <rect x="610.21" y="522.15" width="11.79" height="15.42" fill="#5b616b"><title>missing  localize/localize_disk.cpp:1311  v_ReloadLocalizationFiles_S21</title></rect>
 <rect x="584.63" y="538.58" width="11.79" height="15.42" fill="#5b616b"><title>missing  localize/localize_disk.cpp:1344  </title></rect>
 <text x="588.1" y="503.8" fill="#ffffff" font-size="13" stroke="#1e2127" stroke-width="3" paint-order="stroke">loca…</text>
-<text x="656" y="186" fill="#e6e6e6" font-size="17">Integration milestones: 9/32 tests passing</text>
+<text x="656" y="186" fill="#e6e6e6" font-size="17">Integration milestones: 17/32 tests passing</text>
 <rect x="657.5" y="197.5" width="184.5" height="20" fill="#2b3038"/>
 <text x="661.5" y="213.5" fill="#ffffff" font-size="13" stroke="#1e2127" stroke-width="3" paint-order="stroke">A Recon</text>
 <rect x="658.5" y="218.5" width="59.5" height="58.5" fill="#3fb950"><title>A1 Build inventory: s30/docs/01-inventory.md lists every binary, pak family and tool with versions</title></rect>
@@ -810,8 +810,8 @@
 <rect x="658.5" y="362.5" width="90.2" height="62.3" fill="#3fb950"><title>B1 S30 netmsg ID map: every S21 msgArray slot matched to an S30 slot (GetType + RFB body)</title></rect>
 <text x="662.5" y="377.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">B1</text>
 <text x="662.5" y="392.5" fill="#ffffff" font-size="11">S30 netmsg ID…</text>
-<rect x="750.8" y="362.5" width="90.2" height="62.3" fill="#5b616b"><title>B2 Recv table diff: S30 client class/recvprop dump diffed against S21</title></rect>
-<text x="754.8" y="377.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">B2</text>
+<rect x="750.8" y="362.5" width="90.2" height="62.3" fill="#b8860b"><title>B2 Recv table diff: S30 client class/recvprop dump diffed against S21</title></rect>
+<text x="754.8" y="377.5" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">B2</text>
 <text x="754.8" y="392.5" fill="#ffffff" font-size="11">Recv table di…</text>
 <rect x="658.5" y="426.8" width="90.2" height="62.3" fill="#5b616b"><title>B3 Script native diff: S30 native registration table dumped; Flowstate client/UI calls checked</title></rect>
 <text x="662.5" y="441.8" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">B3</text>
@@ -819,8 +819,8 @@
 <rect x="750.8" y="426.8" width="90.2" height="62.3" fill="#5b616b"><title>B4 Asset version census: per-type asset versions of S30 paks vs what the S3 dedi parses</title></rect>
 <text x="754.8" y="441.8" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">B4</text>
 <text x="754.8" y="456.8" fill="#ffffff" font-size="11">Asset version…</text>
-<rect x="658.5" y="491.2" width="90.2" height="62.3" fill="#b8860b"><title>B5 Connect/signon trace: S30 connectionless packets and signon sequence documented</title></rect>
-<text x="662.5" y="506.2" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">B5</text>
+<rect x="658.5" y="491.2" width="90.2" height="62.3" fill="#3fb950"><title>B5 Connect/signon trace: S30 connectionless packets and signon sequence documented</title></rect>
+<text x="662.5" y="506.2" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">B5</text>
 <text x="662.5" y="521.2" fill="#ffffff" font-size="11">Connect/signo…</text>
 <rect x="750.8" y="491.2" width="90.2" height="62.3" fill="#b8860b"><title>B6 Integrity checks: S30 code-integrity / import checks found or ruled out</title></rect>
 <text x="754.8" y="506.2" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">B6</text>
@@ -850,17 +850,17 @@
 <rect x="846.0" y="384.7" width="78.2" height="54.9" fill="#3fb950"><title>D1 Challenge/connect: dedi logs the S30 client as connected</title></rect>
 <text x="850.0" y="399.7" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">D1</text>
 <text x="850.0" y="414.7" fill="#ffffff" font-size="11">Challenge/c…</text>
-<rect x="926.2" y="384.7" width="78.2" height="54.9" fill="#b8860b"><title>D2 Signon complete: client reaches SIGNONSTATE_FULL</title></rect>
-<text x="930.2" y="399.7" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">D2</text>
+<rect x="926.2" y="384.7" width="78.2" height="54.9" fill="#3fb950"><title>D2 Signon complete: client reaches SIGNONSTATE_FULL</title></rect>
+<text x="930.2" y="399.7" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">D2</text>
 <text x="930.2" y="414.7" fill="#ffffff" font-size="11">Signon comp…</text>
-<rect x="1006.5" y="384.7" width="78.2" height="54.9" fill="#5b616b"><title>D3 First snapshot: client decodes snapshots without desync</title></rect>
-<text x="1010.5" y="399.7" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">D3</text>
+<rect x="1006.5" y="384.7" width="78.2" height="54.9" fill="#3fb950"><title>D3 First snapshot: client decodes snapshots without desync</title></rect>
+<text x="1010.5" y="399.7" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">D3</text>
 <text x="1010.5" y="414.7" fill="#ffffff" font-size="11">First snaps…</text>
-<rect x="846.0" y="441.6" width="78.2" height="54.9" fill="#5b616b"><title>D4 Entities replicate: player, weapons, props created and moving</title></rect>
-<text x="850.0" y="456.6" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">D4</text>
+<rect x="846.0" y="441.6" width="78.2" height="54.9" fill="#b8860b"><title>D4 Entities replicate: player, weapons, props created and moving</title></rect>
+<text x="850.0" y="456.6" fill="#ffffff" font-size="12" stroke="#b8860b" stroke-width="3" paint-order="stroke">D4</text>
 <text x="850.0" y="471.6" fill="#ffffff" font-size="11">Entities re…</text>
-<rect x="926.2" y="441.6" width="78.2" height="54.9" fill="#5b616b"><title>D5 Script remotes: S2C/C2S ScriptRemote calls run on both ends</title></rect>
-<text x="930.2" y="456.6" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">D5</text>
+<rect x="926.2" y="441.6" width="78.2" height="54.9" fill="#3fb950"><title>D5 Script remotes: S2C/C2S ScriptRemote calls run on both ends</title></rect>
+<text x="930.2" y="456.6" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">D5</text>
 <text x="930.2" y="471.6" fill="#ffffff" font-size="11">Script remo…</text>
 <rect x="1006.5" y="441.6" width="78.2" height="54.9" fill="#5b616b"><title>D6 10-min session: 10 minutes in game, no kick, no crash</title></rect>
 <text x="1010.5" y="456.6" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">D6</text>
@@ -870,20 +870,20 @@
 <text x="850.0" y="528.6" fill="#ffffff" font-size="11">Disconnect/…</text>
 <rect x="1088.8" y="197.5" width="165.8" height="20" fill="#2b3038"/>
 <text x="1092.8" y="213.5" fill="#ffffff" font-size="13" stroke="#1e2127" stroke-width="3" paint-order="stroke">E Assets</text>
-<rect x="1089.8" y="218.5" width="80.9" height="57.0" fill="#5b616b"><title>E1 Server closure: list of S30 assets the dedi must load for the target content</title></rect>
-<text x="1093.8" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">E1</text>
+<rect x="1089.8" y="218.5" width="80.9" height="57.0" fill="#3fb950"><title>E1 Server closure: list of S30 assets the dedi must load for the target content</title></rect>
+<text x="1093.8" y="233.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">E1</text>
 <text x="1093.8" y="248.5" fill="#ffffff" font-size="11">Server closu…</text>
-<rect x="1172.6" y="218.5" width="80.9" height="57.0" fill="#5b616b"><title>E2 Models -&gt; dedi: converted mdl load on the dedi (sample, then batch)</title></rect>
-<text x="1176.6" y="233.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">E2</text>
+<rect x="1172.6" y="218.5" width="80.9" height="57.0" fill="#3fb950"><title>E2 Models -&gt; dedi: converted mdl load on the dedi (sample, then batch)</title></rect>
+<text x="1176.6" y="233.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">E2</text>
 <text x="1176.6" y="248.5" fill="#ffffff" font-size="11">Models -&gt; de…</text>
 <rect x="1089.8" y="277.5" width="80.9" height="57.0" fill="#5b616b"><title>E3 Anims -&gt; dedi: arig/aseq convert with R5-AnimConv -i 30 -o 3, clips play</title></rect>
 <text x="1093.8" y="292.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">E3</text>
 <text x="1093.8" y="307.5" fill="#ffffff" font-size="11">Anims -&gt; dedi</text>
-<rect x="1172.6" y="277.5" width="80.9" height="57.0" fill="#5b616b"><title>E4 BSP -&gt; dedi: bspconv -dedi output loads, collision matches</title></rect>
-<text x="1176.6" y="292.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">E4</text>
+<rect x="1172.6" y="277.5" width="80.9" height="57.0" fill="#3fb950"><title>E4 BSP -&gt; dedi: bspconv -dedi output loads, collision matches</title></rect>
+<text x="1176.6" y="292.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">E4</text>
 <text x="1176.6" y="307.5" fill="#ffffff" font-size="11">BSP -&gt; dedi</text>
-<rect x="1089.8" y="336.5" width="80.9" height="57.0" fill="#5b616b"><title>E5 Dedi paks + VPK: RePak/revpk outputs load with zero missing-asset errors</title></rect>
-<text x="1093.8" y="351.5" fill="#ffffff" font-size="12" stroke="#5b616b" stroke-width="3" paint-order="stroke">E5</text>
+<rect x="1089.8" y="336.5" width="80.9" height="57.0" fill="#3fb950"><title>E5 Dedi paks + VPK: RePak/revpk outputs load with zero missing-asset errors</title></rect>
+<text x="1093.8" y="351.5" fill="#ffffff" font-size="12" stroke="#3fb950" stroke-width="3" paint-order="stroke">E5</text>
 <text x="1093.8" y="366.5" fill="#ffffff" font-size="11">Dedi paks + …</text>
 <rect x="1088.8" y="397.5" width="165.8" height="20" fill="#2b3038"/>
 <text x="1092.8" y="413.5" fill="#ffffff" font-size="13" stroke="#1e2127" stroke-width="3" paint-order="stroke">F Integration</text>
@@ -913,5 +913,5 @@
 <text x="774" y="584" fill="#a8adb5" font-size="13">in progress</text>
 <rect x="858" y="574" width="12" height="12" fill="#5b616b"/>
 <text x="875" y="584" fill="#a8adb5" font-size="13">not started</text>
-<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-26 05:31 UTC</text>
+<text x="24" y="618" fill="#a8adb5" font-size="12">* a signature counts when it matches the S30 image exactly once; that does not prove it found the same function (see verified). S30.1 R5pc_r5-301 CL11570498. 2026-10-26 13:40 UTC</text>
 </svg>

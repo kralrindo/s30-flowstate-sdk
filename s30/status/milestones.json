@@ -43,8 +43,9 @@
 				{
 					"id": "B2",
 					"name": "Recv table diff",
-					"state": "todo",
-					"test": "S30 client class/recvprop dump diffed against S21"
+					"state": "wip",
+					"test": "S30 client class/recvprop dump diffed against S21",
+					"note": "client logs every S3 SendProp without an S30 RecvProp or with another type; type changes found (weapon mod bitfields, consumable counts, class mods, overheat) -> prop adapters in progress (docs/20)"
 				},
 				{
 					"id": "B3",
@@ -61,9 +62,9 @@
 				{
 					"id": "B5",
 					"name": "Connect/signon trace",
-					"state": "wip",
+					"state": "done",
 					"test": "S30 connectionless packets and signon sequence documented",
-					"note": "S30 connect path mapped (connect handlers, CClientState::Connect, challenge/resend, identity gates); netchannel stage next"
+					"note": "s30/docs/12: connectionless packets, CONNACCEPT hand-over, signon rungs CONNECTED..FULL, DataBlock, all documented and run"
 				},
 				{
 					"id": "B6",
@@ -132,27 +133,30 @@
 				{
 					"id": "D2",
 					"name": "Signon complete",
-					"state": "wip",
+					"state": "done",
 					"test": "client reaches SIGNONSTATE_FULL",
-					"note": "steps 1-3 done (docs/12): native connect handed over, S3 netchannel parsed and dispatched, C2S rungs; dedi walks CONNECTED -> NEW -> PRESPAWN; string tables, SendTables, ClassInfo processed; next: tolerant decoders (609 unmatched SendProps)"
+					"note": "SIGNONSTATE_FULL (8) reached on mp_rr_canyonlands_staging_mu1 (docs/12 steps 4-6)"
 				},
 				{
 					"id": "D3",
 					"name": "First snapshot",
-					"state": "todo",
-					"test": "client decodes snapshots without desync"
+					"state": "done",
+					"test": "client decodes snapshots without desync",
+					"note": "S3 snapshots re-encoded to S30 50, full + deltas acked, no desync over 5-minute sessions (docs/12 step 6)"
 				},
 				{
 					"id": "D4",
 					"name": "Entities replicate",
-					"state": "todo",
-					"test": "player, weapons, props created and moving"
+					"state": "wip",
+					"test": "player, weapons, props created and moving",
+					"note": "player spawns and moves, a given R-99 renders and fires, impacts arrive; weapon mod bitfields and some props do not bind yet (B2)"
 				},
 				{
 					"id": "D5",
 					"name": "Script remotes",
-					"state": "todo",
-					"test": "S2C/C2S ScriptRemote calls run on both ends"
+					"state": "done",
+					"test": "S2C/C2S ScriptRemote calls run on both ends",
+					"note": "S2C calls run on the CLIENT/UI VMs against the S30 registrations; client calls reach the dedi by name and run (docs/12 steps 9-10, docs/15)"
 				},
 				{
 					"id": "D6",
@@ -164,7 +168,8 @@
 					"id": "D7",
 					"name": "Disconnect/rejoin",
 					"state": "todo",
-					"test": "disconnect and reconnect cleanly"
+					"test": "disconnect and reconnect cleanly",
+					"note": "known: a disconnect while assets still stream in crashes the client (engine asset-loader lookup, docs/13)"
 				}
 			]
 		},
@@ -174,14 +179,16 @@
 				{
 					"id": "E1",
 					"name": "Server closure",
-					"state": "todo",
-					"test": "list of S30 assets the dedi must load for the target content"
+					"state": "done",
+					"test": "list of S30 assets the dedi must load for the target content",
+					"note": "dedi_paks.py closure: the S30 assets the dedi loads for the staging map and mp_lobby (docs/10)"
 				},
 				{
 					"id": "E2",
 					"name": "Models -> dedi",
-					"state": "todo",
-					"test": "converted mdl load on the dedi (sample, then batch)"
+					"state": "done",
+					"test": "converted mdl load on the dedi (sample, then batch)",
+					"note": "3300 S30 models converted for the dedi; collision gate dedi_coll_gate.py passes on all (docs/10)"
 				},
 				{
 					"id": "E3",
@@ -192,14 +199,16 @@
 				{
 					"id": "E4",
 					"name": "BSP -> dedi",
-					"state": "todo",
-					"test": "bspconv -dedi output loads, collision matches"
+					"state": "done",
+					"test": "bspconv -dedi output loads, collision matches",
+					"note": "staging map and mp_lobby BSPs from S30 load on the dedi and reach ready; dedi_bsp_gate.py (docs/10, docs/17)"
 				},
 				{
 					"id": "E5",
 					"name": "Dedi paks + VPK",
-					"state": "todo",
-					"test": "RePak/revpk outputs load with zero missing-asset errors"
+					"state": "done",
+					"test": "RePak/revpk outputs load with zero missing-asset errors",
+					"note": "dedi rpaks + VPKs rebuilt from S30 under the same names; ready with 0 unresolved dependencies (docs/10)"
 				}
 			]
 		},
