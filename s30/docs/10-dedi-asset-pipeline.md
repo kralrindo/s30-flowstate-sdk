@@ -164,6 +164,15 @@ scripts are S21's) with S30's new legends, weapons and challenge data added:
   `cfg/server/persistent_player_data_manifest.rson`: `DG-A72EE5159C447511` appended. Originals of the autogen file
   and manifest kept as `.s21`; `persistent_player_data.pdef` unchanged. The dedi reaches `ready` with it.
 
+Revised the same day: S30's client stats code registers every S30 season and ranked period, so the `--no-grow` pdef
+failed in the client ("Invalid persistent var name stats.seasons[...]"). Now built as
+`pdef_augment.py ... --no-grow eModesFlavors` then `tools/dedi_mode_trim.py ... --drop arenas`: per-mode stats
+(`stats.modes[eModesFlavors]`, 685 entries per mode; S30 has no per-mode stats) keep only the modes a dedi playlist
+sets `stats_match_type` to (control, ftdm, gungame, treasurehunt, winter_express), removed from both `eModesFlavors`
+and the dedi's `STATS_ALTERNATE_MODE_REFS` (`sh_stats_defs.gnut`, original `.s21`). arenas (only old challenges name
+it; their refs are skipped at level init) dropped on the user's call. 22,516 entries, 39 structs; blessed version
+`DG-A827ED365C77F0A6` appended. Dedi warnings unchanged. S30-only structs: see docs/12 Step 5.
+
 Why not S30's whole pdef:
 
 - S30's pdef has 47 structs; the dedi's parser allows 40 (`cmp rbx, 0x28` at `r5apex_ds+0x35EF81`, struct table

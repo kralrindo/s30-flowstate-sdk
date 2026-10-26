@@ -34,6 +34,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rtech_guid import string_to_guid  # noqa: E402
+import dedi_coll_gate  # noqa: E402
 
 WS = "F:/apex_builds/m2299605425033557595"
 S30_PAKS = WS + "/depot/paks/Win64"
@@ -265,6 +266,8 @@ def step_models():
     open(LOGS + "/rmdlconv_failed.txt", "w").write("\n".join(failed) + "\n")
     print("models: %d converted, %d failed, %d unchanged (logs/rmdlconv_failed.txt; per-model logs in work/mdl_src)"
           % (len(jobs) - len(failed), len(failed), len(cache) - (len(jobs) - len(failed))))
+    if dedi_coll_gate.main(MODELS):
+        sys.exit("models: collision gate failed")
 
 
 def step_anims():

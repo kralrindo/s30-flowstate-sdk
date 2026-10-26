@@ -31,6 +31,16 @@ foreach ($dll in "loader.dll", "client_s30.dll") {
 Remove-Item (Join-Path $client "s30probe.dll") -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $client "platform\logs") | Out-Null
 
+# launch_client_dx12.bat passes -playlistFile "playlists_r5_patch.txt"; the S30
+# depot has none, and without it the client exits ("Failed to load playlists",
+# fatal). The dedi's copy is used, as a real file (never a hardlink into the dedi).
+$playlist = Join-Path $Workspace "build\s3_server\platform\playlists_r5_patch.txt"
+if (Test-Path $playlist) {
+	Copy-Item $playlist (Join-Path $client "platform\playlists_r5_patch.txt") -Force
+} else {
+	Write-Warning "no dedi playlist at $playlist -- the .bat launch will fail to load playlists"
+}
+
 $links = (& fsutil hardlink list (Join-Path $depot $exe)) | Measure-Object -Line
 if ($links.Lines -ne 1) { throw "depot exe has extra hardlinks -- refusing" }
 Write-Host "deployed: $client"

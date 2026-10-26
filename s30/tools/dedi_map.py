@@ -13,6 +13,12 @@ Steps (default: all):
     vpk      revpk -pack english server                              -> <work>/vpk
     install  copy the VPK pair into the workspace dedi (originals kept as .s21)
 
+A map that ships inside vpk/server_mp_common (mp_lobby) instead of its own server VPK:
+    gate     dedi_bsp_gate.py against shipped dedi maps + the staging conversion
+    common   the installed server_mp_common with this map's files replaced, repacked and
+             round-trip checked                         -> asset_pipeline/<map>_s30/
+             (install with asset_pipeline/<map>_s30/install.ps1)
+
     py dedi_map.py <map> [step ...]
 """
 import csv
@@ -133,12 +139,104 @@ class Map:
             print("installed", dst)
 
 
+    # Shipped dedi server VPKs (S3 maps the dedi loads today) whose BSPs the gate compares against,
+    # plus the staging conversion that runs on this dedi.
+    GATE_REFS = ["mp_rr_aqueduct", "mp_rr_arena_composite", "mp_rr_arena_skygarden", "mp_rr_party_crasher"]
+
+    def gate(self):
+        refdir = WS + "/asset_pipeline/%s_s30/ref" % self.m
+        refs = []
+        for r in self.GATE_REFS:
+            if not os.path.isfile("%s/%s/maps/%s.bsp" % (refdir, r, r)):
+                unpack(SERVER + "/vpk/englishserver_%s.bsp.pak000_dir.vpk" % r, "%s/%s" % (refdir, r),
+                       ["maps", "manifest", "scripts", "cfg"], "%s/%s.unpack.log" % (self.logs, r))
+            refs.append("%s/%s/maps" % (refdir, r))
+        refs.append(WS + "/asset_pipeline/s30_maps/mp_rr_canyonlands_staging_mu1/bsp_dedi")
+        r = subprocess.run([sys.executable, os.path.dirname(os.path.abspath(__file__)) + "/dedi_bsp_gate.py",
+                            self.w + "/bsp_dedi", self.m] + refs)
+        if r.returncode:
+            sys.exit("gate failed")
+
+    def common(self):
+        out = WS + "/asset_pipeline/%s_s30" % self.m
+        src = SERVER + "/vpk/englishserver_mp_common.bsp.pak000_dir.vpk"
+        cur = out + "/current"
+        shutil.rmtree(cur, ignore_errors=True)
+        # revpk -unpack drops files whose folder does not exist: unpack once for the manifest,
+        # create every folder it names, unpack again
+        unpack(src, cur, ["manifest"], self.logs + "/common_unpack1.log")
+        paths = manifest_paths(cur + "/manifest/englishserver_mp_common.txt")
+        unpack(src, cur, sorted({os.path.dirname(p) for p in paths if os.path.dirname(p)}), self.logs + "/common_unpack2.log")
+        lost = [p for p in paths if not os.path.isfile(cur + "/" + p)]
+        if lost:
+            sys.exit("common: unpack lost %d files: %s" % (len(lost), lost[:8]))
+        ws = out + "/ws"
+        shutil.rmtree(ws, ignore_errors=True)
+        shutil.copytree(cur, ws)
+        mine = re.compile(r"^maps/%s(\.bsp|_)" % re.escape(self.m))
+        old = [p for p in paths if mine.match(p)]
+        for p in old:
+            os.remove(ws + "/" + p)
+        new = sorted(os.listdir(self.w + "/bsp_dedi"), key=lambda f: (not f.endswith(".bsp"), f.endswith(".ent"), f))
+        for f in new:
+            shutil.copy2(self.w + "/bsp_dedi/" + f, ws + "/maps/" + f)
+        # manifest: this map's entries as dedi_map.py's own server VPKs write them, the rest as unpacked
+        blocks = manifest_blocks(cur + "/manifest/englishserver_mp_common.txt")
+        lines = ['"BuildManifest"', "{"]
+        for f in new:
+            lines += ['\t"maps\\%s"' % f, "\t{", '\t\t"preloadSize"\t\t"0"', '\t\t"loadFlags"\t\t"257"',
+                      '\t\t"textureFlags"\t\t"0"', '\t\t"useCompression"\t\t"1"', '\t\t"deDuplicate"\t\t"1"', "\t}"]
+        for p, body in blocks:
+            if not mine.match(p):
+                lines += ['\t"%s"' % p.replace("/", "\\"), "\t{"] + ["\t\t" + l.strip() for l in body.strip().splitlines()] + ["\t}"]
+        lines.append("}")
+        open(ws + "/manifest/englishserver_mp_common.txt", "w", newline="\r\n").write("\n".join(lines) + "\n")
+        shutil.rmtree(out + "/vpk", ignore_errors=True)
+        os.makedirs(out + "/vpk")
+        run([REVPK_DIR + "/revpk.exe", "-pack", "english", "server", "mp_common", ws + "/", out + "/vpk/", "-1", "default"],
+            self.logs + "/common_pack.log", cwd=REVPK_DIR)
+        # round trip: the built pair unpacks to exactly ws (every file, byte for byte)
+        ver = out + "/verify"
+        shutil.rmtree(ver, ignore_errors=True)
+        built = out + "/vpk/englishserver_mp_common.bsp.pak000_dir.vpk"
+        unpack(built, ver, sorted({os.path.dirname(p) for p in manifest_paths(ws + "/manifest/englishserver_mp_common.txt")
+                                   if os.path.dirname(p)} | {"manifest"}), self.logs + "/common_verify.log")
+        want = sorted(manifest_paths(ws + "/manifest/englishserver_mp_common.txt"))
+        got = sorted(manifest_paths(ver + "/manifest/englishserver_mp_common.txt"))
+        bad = [p for p in want if not os.path.isfile(ver + "/" + p) or open(ver + "/" + p, "rb").read() != open(ws + "/" + p, "rb").read()]
+        if want != got or bad:
+            sys.exit("common: round trip differs (%d listed vs %d, %d files differ: %s)" % (len(want), len(got), len(bad), bad[:8]))
+        same = [p for p in paths if not mine.match(p)]
+        changed = [p for p in same if open(cur + "/" + p, "rb").read() != open(ws + "/" + p, "rb").read()]
+        if changed:
+            sys.exit("common: files outside %s changed: %s" % (self.m, changed))
+        print("common: %d %s files replaced by %d; %d other files byte-identical to the installed VPK; round trip ok"
+              % (len(old), self.m, len(new), len(same)))
+        print("common: built", sorted(os.listdir(out + "/vpk")))
+
+
+def unpack(vpk, out, folders, log):
+    for f in folders:
+        os.makedirs(out + "/" + f, exist_ok=True)
+    run([REVPK_DIR + "/revpk.exe", "-unpack", vpk, out + "/"], log, cwd=REVPK_DIR)
+
+
+def manifest_blocks(path):
+    t = open(path, encoding="utf-8").read()
+    return [(p.replace("\\", "/"), b) for p, b in re.findall(r'^\t"([^"]+)"\s*\{([^}]*)\}', t, re.M)]
+
+
+def manifest_paths(path):
+    return [p for p, _ in manifest_blocks(path)]
+
+
 STEPS = ["export", "stage", "convert", "closure", "vpk", "install"]
+EXTRA = ["gate", "common"]
 
 if __name__ == "__main__":
     m = Map(sys.argv[1])
     for s in sys.argv[2:] or STEPS:
-        if s not in STEPS:
-            sys.exit("unknown step %s (%s)" % (s, ", ".join(STEPS)))
+        if s not in STEPS + EXTRA:
+            sys.exit("unknown step %s (%s)" % (s, ", ".join(STEPS + EXTRA)))
         print("== %s" % s)
         getattr(m, s)()
