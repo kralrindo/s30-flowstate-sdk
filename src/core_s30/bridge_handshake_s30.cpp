@@ -343,8 +343,13 @@ bool S30Bridge_Connect(const char* pszHostPort)
 		S30Bridge_Disconnect();
 	}
 
+	// A +connect on the command line arrives with its quotes ("127.0.0.1:37015").
+	while (*pszHostPort == '"' || *pszHostPort == ' ')
+		++pszHostPort;
 	char szHost[128];
 	strncpy_s(szHost, pszHostPort, _TRUNCATE);
+	for (size_t n = strlen(szHost); n && (szHost[n - 1] == '"' || szHost[n - 1] == ' '); --n)
+		szHost[n - 1] = '\0';
 	int nPort = 37015;
 	char* const pszColon = strrchr(szHost, ':');
 	if (pszColon && !strchr(pszColon + 1, ']'))

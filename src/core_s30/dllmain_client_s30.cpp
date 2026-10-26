@@ -35,6 +35,7 @@
 #include "bridge_predcensus_s30.h"
 #include "bridge_prederr_s30.h"
 #include "bridge_noclip_s30.h"
+#include "bridge_guards_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -152,6 +153,7 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30Hud_Install();
 	S30PredErr_Install();
 	S30Noclip_Install();
+	S30Guards_Install();
 	S30Identity_Init();
 	S30Console_StartInput();
 
