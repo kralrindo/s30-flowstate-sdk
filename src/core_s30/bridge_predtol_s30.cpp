@@ -57,6 +57,7 @@ static const PredTol_t s_tolerances[] =
 	{ "m_lastUCmdSimulationRemainderTime", 0.06f },
 	{ "m_airMoveBlockPlaneTime", 0.06f },
 	{ "m_groundNormal", 0.06f },
+	{ "m_currentFramePlayer.timeBase", 0.06f }, // ticks + remainder: the same clock bookkeeping
 };
 
 static uintptr_t s_pAppliedMap = 0;
@@ -114,87 +115,135 @@ static void PredTol_Apply(void)
 }
 
 //-----------------------------------------------------------------------------
-// Client-owned bits ([PRED-UNFED] shape)
+// Client-owned values ([PRED-UNFED] shape)
 //
-// predictableFlags is a per-slot bit field. The dedi's copy is widened to 8 bits
-// with 8-slot set/clear masks for the S21 client ([PFLAGS8] in its server.dll),
-// but nothing on the dedi sets slot 7 for S30: the client predicts 0xF6, the dedi
-// acks 0x76. The error check hook found it the first failing field of 54 % of all
-// prediction errors, each a full restore + replay -- the movement corrections. A
-// received value cannot fix it: the server record only refreshes when the dedi
-// resends the field, and its value never changes. So, as the S21 bridge does for
-// fields the dedi never feeds, the predicted bit is copied into the server record
-// just before the check, when that bit is the only difference; the other seven
-// bits stay server-authored and compared.
+// Predicted fields the dedi never authors for S30. The error check compares the
+// predicted record (ctx +0x10) with the server record (ctx +0x18, the one a
+// restore installs); a received value cannot fix these, the server record only
+// refreshes when the dedi resends the field. So, as the S21 bridge does, the
+// predicted value is copied into the server record just before the check:
+//   predictableFlags (C_Player): a per-slot bit field. The dedi's copy is widened
+//     to 8 bits with 8-slot masks for the S21 client ([PFLAGS8] in its
+//     server.dll), but nothing on it sets slot 7 for S30 (client 0xF6, dedi 0x76):
+//     the first failing field of 54 % of all errors. Only bit 7 is taken, and only
+//     when it is the whole difference.
+//   m_lastSprintPressTime, m_currentFrameLocalPlayer.m_duckTransitionRemainderMsec
+//     (C_Player), m_flTimeWeaponIdle (CWeaponX): the dedi acks 0 against the
+//     client's live value (measured; the S21 bridge masks the first two too).
+//     Taken only while the server's value is 0.
 //-----------------------------------------------------------------------------
 static const int CTX_RECORD0 = 0x10;
 static const int CTX_RECORD1 = 0x18;
 static const int CTX_INDEX0 = 0x20;
 static const int CTX_INDEX1 = 0x24;
 static const int TD_FLAT = 0x70;
+
+enum ClientValueRule_t
+{
+	RULE_BIT7,        // predictableFlags: the client's bit 7 when it is the only difference
+	RULE_SERVER_ZERO, // the client's value while the server's is 0
+};
+struct ClientValue_t
+{
+	const char* pszClass;
+	const char* pszField;
+	ClientValueRule_t eRule;
+	int nBytes;
+};
+static const ClientValue_t s_clientValues[] =
+{
+	{ "C_Player", "predictableFlags", RULE_BIT7, 4 },
+	{ "C_Player", "m_lastSprintPressTime", RULE_SERVER_ZERO, 4 },
+	{ "C_Player", "m_currentFrameLocalPlayer.m_duckTransitionRemainderMsec", RULE_SERVER_ZERO, 4 },
+	{ "CWeaponX", "m_flTimeWeaponIdle", RULE_SERVER_ZERO, 4 },
+};
+static const int kClientValues = sizeof(s_clientValues) / sizeof(s_clientValues[0]);
 static const uint32_t kPredictableFlagsClientBits = 0x80;
 
-struct ClientBitsField_t
+struct ClientValueCache_t
 {
 	uintptr_t pMap;
 	int nBlock;
-	const uint8_t* pTd; // nullptr: not in that block
+	const uint8_t* pTd[kClientValues]; // nullptr: not in that block
 };
-static ClientBitsField_t s_clientBits[8];
-static int s_nClientBits = 0;
+static ClientValueCache_t s_cache[32];
+static int s_nCache = 0;
+static volatile LONG s_nTaken[kClientValues];
 
-static const uint8_t* PredTol_FindField(uint8_t* pMap, int nBlock, const char* pszField)
+static const ClientValueCache_t* PredTol_Lookup(uint8_t* pMap, int nBlock, const char* pszClass)
 {
-	for (int i = 0; i < s_nClientBits; ++i)
+	for (int i = 0; i < s_nCache; ++i)
 	{
-		if (s_clientBits[i].pMap == reinterpret_cast<uintptr_t>(pMap) && s_clientBits[i].nBlock == nBlock)
-			return s_clientBits[i].pTd;
+		if (s_cache[i].pMap == reinterpret_cast<uintptr_t>(pMap) && s_cache[i].nBlock == nBlock)
+			return &s_cache[i];
 	}
-	const uint8_t* pFound = nullptr;
+	if (s_nCache >= static_cast<int>(sizeof(s_cache) / sizeof(s_cache[0])))
+		return nullptr;
+	ClientValueCache_t& c = s_cache[s_nCache++];
+	c.pMap = reinterpret_cast<uintptr_t>(pMap);
+	c.nBlock = nBlock;
+	memset(c.pTd, 0, sizeof(c.pTd));
 	uint8_t* const pOpt = *reinterpret_cast<uint8_t**>(pMap + DMAP_OPTIMIZED);
-	if (pOpt && nBlock >= 0 && nBlock < 4)
+	if (!pOpt || nBlock < 0 || nBlock > 3)
+		return &c;
+	uint8_t* const pBlock = pOpt + nBlock * OPT_BLOCK_STRIDE;
+	const uint8_t* const pFields = *reinterpret_cast<uint8_t* const*>(pBlock + OPT_BLOCK_FIELDS);
+	const int nCount = *reinterpret_cast<const int*>(pBlock + OPT_BLOCK_COUNT);
+	for (int i = 0; pFields && i < nCount && i < 8192; ++i)
 	{
-		uint8_t* const pBlock = pOpt + nBlock * OPT_BLOCK_STRIDE;
-		const uint8_t* const pFields = *reinterpret_cast<uint8_t* const*>(pBlock + OPT_BLOCK_FIELDS);
-		const int nCount = *reinterpret_cast<const int*>(pBlock + OPT_BLOCK_COUNT);
-		for (int i = 0; pFields && i < nCount && i < 8192; ++i)
+		const uint8_t* const pTd = pFields + static_cast<size_t>(i) * TD_STRIDE;
+		const char* const pszName = *reinterpret_cast<const char* const*>(pTd + TD_NAME);
+		for (int k = 0; pszName && k < kClientValues; ++k)
 		{
-			const uint8_t* const pTd = pFields + static_cast<size_t>(i) * TD_STRIDE;
-			const char* const pszName = *reinterpret_cast<const char* const*>(pTd + TD_NAME);
-			if (pszName && !strcmp(pszName, pszField))
-			{
-				pFound = pTd;
-				break;
-			}
+			if (!strcmp(s_clientValues[k].pszClass, pszClass) && !strcmp(pszName, s_clientValues[k].pszField))
+				c.pTd[k] = pTd;
 		}
 	}
-	if (s_nClientBits < static_cast<int>(sizeof(s_clientBits) / sizeof(s_clientBits[0])))
-		s_clientBits[s_nClientBits++] = { reinterpret_cast<uintptr_t>(pMap), nBlock, pFound };
-	return pFound;
+	return &c;
 }
 
 void S30PredTol_BeforeErrorCheck(uint8_t* pCtx, uint8_t* pMap, int nBlock)
 {
 	const char* const pszClass = *reinterpret_cast<const char* const*>(pMap + DMAP_CLASSNAME);
-	if (!pszClass || strcmp(pszClass, "C_Player"))
+	if (!pszClass || (strcmp(pszClass, "C_Player") && strcmp(pszClass, "CWeaponX")))
 		return;
-	const uint8_t* const pTd = PredTol_FindField(pMap, nBlock, "predictableFlags");
-	uint8_t* const pRec0 = *reinterpret_cast<uint8_t**>(pCtx + CTX_RECORD0);
-	uint8_t* const pRec1 = *reinterpret_cast<uint8_t**>(pCtx + CTX_RECORD1);
+	const ClientValueCache_t* const pCache = PredTol_Lookup(pMap, nBlock, pszClass);
+	uint8_t* const pPredicted = *reinterpret_cast<uint8_t**>(pCtx + CTX_RECORD0);
+	uint8_t* const pServer = *reinterpret_cast<uint8_t**>(pCtx + CTX_RECORD1);
 	const int nIdx0 = *reinterpret_cast<const int*>(pCtx + CTX_INDEX0);
 	const int nIdx1 = *reinterpret_cast<const int*>(pCtx + CTX_INDEX1);
-	if (!pTd || !pRec0 || !pRec1 || nIdx0 < 0 || nIdx0 > 3 || nIdx1 < 0 || nIdx1 > 3)
+	if (!pCache || !pPredicted || !pServer || nIdx0 < 0 || nIdx0 > 3 || nIdx1 < 0 || nIdx1 > 3)
 		return;
-	uint32_t* const pA = reinterpret_cast<uint32_t*>(pRec0 + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx0));
-	uint32_t* const pB = reinterpret_cast<uint32_t*>(pRec1 + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx1));
-	if ((*pA ^ *pB) != kPredictableFlagsClientBits)
-		return;
-	*pA |= kPredictableFlagsClientBits;
-	*pB |= kPredictableFlagsClientBits;
-	static volatile LONG s_nMasked = 0;
-	const LONG n = InterlockedIncrement(&s_nMasked);
-	if (n == 1 || n % 1000 == 0)
-		S30LogFile("[PRED-UNFED] predictableFlags bit 7 kept on the server record (#%ld)\n", n);
+	for (int k = 0; k < kClientValues; ++k)
+	{
+		const uint8_t* const pTd = pCache->pTd[k];
+		if (!pTd)
+			continue;
+		uint32_t* const pA = reinterpret_cast<uint32_t*>(pPredicted + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx0));
+		uint32_t* const pB = reinterpret_cast<uint32_t*>(pServer + *reinterpret_cast<const int*>(pTd + TD_FLAT + 4 * nIdx1));
+		bool bTaken = false;
+		if (s_clientValues[k].eRule == RULE_BIT7)
+		{
+			if ((*pA ^ *pB) == kPredictableFlagsClientBits)
+			{
+				*pA |= kPredictableFlagsClientBits;
+				*pB |= kPredictableFlagsClientBits;
+				bTaken = true;
+			}
+		}
+		else if (!*pB && *pA)
+		{
+			*pB = *pA;
+			bTaken = true;
+		}
+		if (bTaken)
+		{
+			const LONG nTaken = InterlockedIncrement(&s_nTaken[k]);
+			if (nTaken == 1 || nTaken % 1000 == 0)
+				S30LogFile("[PRED-UNFED] %s.%s: client value kept on the server record (#%ld)\n", pszClass,
+					s_clientValues[k].pszField, nTaken);
+		}
+	}
 }
 
 void S30PredTol_OnSnapshot(void)
