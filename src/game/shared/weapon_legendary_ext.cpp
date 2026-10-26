@@ -1,6 +1,6 @@
 //=============================================================================
 //
-// Purpose: grow WeaponInfo legendary slots 8 -> 32 and grow modelprecache 4096 -> 8192.
+// Purpose: grow WeaponInfo legendary slots 8 -> 64 and grow modelprecache 4096 -> 8192.
 // Twin halves have different alloc sizes; never carry an offset across that boundary.
 //
 //=============================================================================
@@ -25,8 +25,8 @@
 // Runtime gate. Disable + restart to revert to stock dedi (8-slot cap).
 //-----------------------------------------------------------------------------
 static ConVar sdk_legendary_cap("sdk_legendary_cap", "1", FCVAR_REPLICATED,
-	"Lift legendary-skin slot cap from S3's 8 to S21's 32 (server-side). "
-	"Grows server WeaponInfo struct by 12288 bytes per weapon and relocates "
+	"Lift legendary-skin slot cap from S3's 8 to 64 (server-side). "
+	"Grows server WeaponInfo struct by 28672 bytes per weapon and relocates "
 	"the view-model names array. Disable + restart to revert to stock S3.");
 
 // Two WeaponInfo twins. Never carry an offset across the client/server half boundary.
@@ -37,17 +37,20 @@ namespace s3Cl {
 	constexpr uint8_t  kCap        = 8;
 }
 
-// Client-half: 32 slots. World stays; view array moves after the expanded world names.
+// Client-half: 64 slots (S30 gives the R-301 42 distinct skin world models, the R-99 38,
+// the Wingman 35; S21 needed 32). The cap compares are imm8, so <= 127. World stays; the
+// view array moves after the expanded world names. The index is networked as a 32-bit int
+// (CWeaponX m_legendaryModelIndex, nBits 0x20), so the slot count is the only limit.
 namespace oursCl {
 	constexpr uint32_t kSlotBytes  = 256;
-	constexpr uint8_t  kCap        = 32;
+	constexpr uint8_t  kCap        = 64;
 	constexpr uint32_t kWorldOff   = s3Cl::kWorldOff;
 	constexpr uint32_t kViewOff    = s3Cl::kWorldOff + (uint32_t)kCap * kSlotBytes;
 	constexpr uint32_t kStructSize = kViewOff + (uint32_t)kCap * kSlotBytes;
 }
 
-static_assert(oursCl::kViewOff   == 0x599D8, "view offset math (world end)");
-static_assert(oursCl::kStructSize == 0x5B9D8, "struct size math");
+static_assert(oursCl::kViewOff   == 0x5B9D8, "view offset math (world end)");
+static_assert(oursCl::kStructSize == 0x5F9D8, "struct size math");
 static_assert(oursCl::kStructSize > s3Cl::kStructSize, "struct must grow");
 
 // Server-half is the one CWeaponX reads. Re-derive every offset on that half.
@@ -62,8 +65,8 @@ namespace oursSv {
 	constexpr uint32_t kStructSize = kViewOff + (uint32_t)oursCl::kCap * oursCl::kSlotBytes
 	                                + (s3Sv::kStructSize - (s3Sv::kViewOff + 8 * oursCl::kSlotBytes));
 }
-static_assert(oursSv::kViewOff    == 0x590A4, "server-half view offset math");
-static_assert(oursSv::kStructSize == 0x5B0A8, "server-half struct size math");
+static_assert(oursSv::kViewOff    == 0x5B0A4, "server-half view offset math");
+static_assert(oursSv::kStructSize == 0x5F0A8, "server-half struct size math");
 
 static bool s_bServerStructGrown = false;
 static bool s_bServerAllocFailed = false;
@@ -571,7 +574,7 @@ void VWeaponLegendaryExt::Detour(const bool bAttach) const
 	ApplyModelPrecacheGrow(moduleBase, moduleSize);
 	const int modelArrayFail = ApplyModelArrayPatches(moduleBase);
 
-	// Bisect gate: skip the 8 -> 32 slot-cap patches.
+	// Bisect gate: skip the 8 -> 64 slot-cap patches.
 	const bool skipLegendary =
 		CommandLine()->CheckParm("-disable_wleg_legendary");
 
@@ -581,7 +584,7 @@ void VWeaponLegendaryExt::Detour(const bool bAttach) const
 	{
 		Msg(eDLL_T::ENGINE,
 			"[WLEG-EXT] LEGENDARY-CAP DISABLED via -disable_wleg_legendary -- "
-			"modelprecache grow still active (so the dedi boots) but cap 8->32, "
+			"modelprecache grow still active (so the dedi boots) but cap 8->64, "
 			"WeaponInfo grow, and view-model disp32 relocations are SKIPPED\n");
 
 		// Detour both SetWeaponLegendaryModel halves so index >= 8 is not rejected.
