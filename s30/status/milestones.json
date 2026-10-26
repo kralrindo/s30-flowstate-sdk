@@ -36,8 +36,9 @@
 				{
 					"id": "B1",
 					"name": "S30 netmsg ID map",
-					"state": "todo",
-					"test": "every S21 msgArray slot matched to an S30 slot (GetType + RFB body)"
+					"state": "done",
+					"test": "every S21 msgArray slot matched to an S30 slot (GetType + RFB body)",
+					"note": "s30/docs/11: 52 S21 S2C slots and 29 C2S slots matched (order+size, handler slot, decompiled bodies); format changes: svc_Print +1 bit, clc_ClientTick 3 values; clc_Move usercmd encoding still to compare"
 				},
 				{
 					"id": "B2",
@@ -131,8 +132,9 @@
 				{
 					"id": "D2",
 					"name": "Signon complete",
-					"state": "todo",
-					"test": "client reaches SIGNONSTATE_FULL"
+					"state": "wip",
+					"test": "client reaches SIGNONSTATE_FULL",
+					"note": "step 1 done (docs/12): the dedi's CONNACCEPT hands the S30 engine its native type-12 reply -> FullConnect, netchannel, signon 2, level load starts; next: the netchannel receive path"
 				},
 				{
 					"id": "D3",

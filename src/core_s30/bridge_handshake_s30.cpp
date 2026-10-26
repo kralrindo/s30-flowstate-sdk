@@ -25,6 +25,9 @@
 #include <cstring>
 #include "s30_log.h"
 #include "bridge_handshake_s30.h"
+#include "bridge_signon_s30.h"
+#include "console_s30.h"
+#include "concommand_s30.h"
 
 #define HOST_PROOF_MAPPING_FMT "Local\\R5F_HostProof_%d" // engine/shared/host_proof.h
 #define HOST_PROOF_CONVAR      "cl_hostProof"
@@ -216,6 +219,7 @@ static void Bridge_OnConnAccept(const uint8_t* pBody, int nBody)
 	s_szAcceptedMode[m] = '\0';
 	InterlockedExchange(&s_eStage, static_cast<LONG>(BridgeStage_t::ACCEPTED));
 	S30Log("[BRIDGE] CONNACCEPT: map '%s' mode '%s' -- the dedi has the client as connected\n", s_szAcceptedMap, s_szAcceptedMode);
+	S30Signon_OnConnAccept(s_szAcceptedMap);
 }
 
 static DWORD WINAPI Bridge_PollThread(LPVOID)
@@ -316,6 +320,26 @@ bool S30Bridge_Connect(const char* pszHostPort)
 		s_hPollThread = CreateThread(NULL, 0, Bridge_PollThread, NULL, 0, NULL);
 	}
 
+	// Stage 2: the engine connects natively to the same address (server address
+	// and signon 1 in CClientState); its own datagrams to the dedi are dropped and
+	// the dedi's connection is handed to it on CONNACCEPT (bridge_signon_s30).
+	// net_usesocketsforloopback 1: without it a 127.0.0.1 connect never touches a
+	// socket (DEVELOPMENTONLY in S30.1). cl_strict_transport_checks 0: the
+	// connectionless wrapper (0x3F2FB0) otherwise drops a reply that did not come
+	// through DTLS; it is read nowhere else. Both are restored on disconnect.
+	S30Signon_Begin(s_dest, s_hSocket);
+	static const char* const s_pszBridgeVars[] = { "net_usesocketsforloopback", "cl_strict_transport_checks" };
+	for (const char* pszVar : s_pszBridgeVars)
+	{
+		const int nOld = S30ConCommand_ClearFlags(pszVar, 0x2 /*DEVELOPMENTONLY*/ | 0x10 /*HIDDEN*/);
+		S30Log("[BRIDGE] %s: flags 0x%X%s\n", pszVar, nOld, nOld < 0 ? " (not found)" : "");
+	}
+	char szConnect[192];
+	snprintf(szConnect, sizeof(szConnect),
+		"net_usesocketsforloopback 1; cl_strict_transport_checks 0; connect %s:%d", szHost, nPort);
+	if (!S30Console_SendToEngine(szConnect))
+		S30Log("[BRIDGE] Cbuf_AddText unresolved -- native connect not started\n");
+
 	uint8_t challenge[21];
 	challenge[0] = challenge[1] = challenge[2] = challenge[3] = 0xFF;
 	challenge[4] = 0x48; // C2S_CHALLENGE
@@ -333,5 +357,7 @@ bool S30Bridge_Connect(const char* pszHostPort)
 void S30Bridge_Disconnect(void)
 {
 	InterlockedExchange(&s_eStage, static_cast<LONG>(BridgeStage_t::IDLE));
+	S30Signon_End();
+	S30Console_SendToEngine("disconnect; cl_strict_transport_checks 1; net_usesocketsforloopback 0");
 	S30Log("[BRIDGE] reset to idle\n");
 }

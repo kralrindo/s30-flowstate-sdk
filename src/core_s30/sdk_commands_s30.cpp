@@ -14,6 +14,7 @@
 #include "concommand_s30.h"
 #include "identity_s30.h"
 #include "bridge_handshake_s30.h"
+#include "bridge_signon_s30.h"
 #include "sdk_commands_s30.h"
 
 struct S30Command_t
@@ -205,10 +206,16 @@ static void Cmd_BridgeDisconnect(int, const char* const*)
 	S30Bridge_Disconnect();
 }
 
+static void Cmd_ClientState(int, const char* const*)
+{
+	S30Signon_PrintClientState();
+}
+
 void S30Commands_RegisterBuiltins(void)
 {
 	S30Commands_Register("bridge_connect", "bridge_connect [ip:port] -- S3 dedi handshake (default 127.0.0.1:37015)", Cmd_BridgeConnect);
 	S30Commands_Register("bridge_disconnect", "reset the S3 bridge handshake", Cmd_BridgeDisconnect);
+	S30Commands_Register("sdk_clstate", "client state 0: signon, server address, netchannel, bridge routes", Cmd_ClientState);
 	S30Commands_Register("sdk_identity", "show the offline platform identity (Nucleus id, tokens)", Cmd_Identity);
 	S30Commands_Register("sdk_cbuf", "sdk_cbuf <text> -- send text to the engine command buffer, skipping SDK commands", Cmd_Cbuf);
 	S30Commands_Register("sdk_cvar", "sdk_cvar <name> -- whether an engine command/convar exists, and its flags", Cmd_Cvar);

@@ -19,6 +19,8 @@ int S30ConCommand_RegisterSdkCommands(void);
 void* S30ConCommand_FindCommandBase(const char* pszName);
 // Flags of a command/convar, -1 if not found.
 int S30ConCommand_GetFlags(const char* pszName);
+// Clears nClear in one command/convar's flags; returns the old flags, -1 if not found.
+int S30ConCommand_ClearFlags(const char* pszName, int nClear);
 // Clears FCVAR_DEVELOPMENTONLY and FCVAR_HIDDEN on every registered command and
 // convar (the S21 SDK does this under -devsdk). Returns the number changed.
 int S30ConCommand_UnlockDevelopmentOnly(void);

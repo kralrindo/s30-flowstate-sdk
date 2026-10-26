@@ -164,6 +164,17 @@ int S30ConCommand_GetFlags(const char* pszName)
 	return pBase ? *reinterpret_cast<const int*>(pBase + s_nOffFlags) : -1;
 }
 
+int S30ConCommand_ClearFlags(const char* pszName, int nClear)
+{
+	uint8_t* const pBase = static_cast<uint8_t*>(S30ConCommand_FindCommandBase(pszName));
+	if (!pBase)
+		return -1;
+	int& nFlags = *reinterpret_cast<int*>(pBase + s_nOffFlags);
+	const int nOld = nFlags;
+	nFlags &= ~nClear;
+	return nOld;
+}
+
 int S30ConCommand_UnlockDevelopmentOnly(void)
 {
 	uint8_t* const pCvar = static_cast<uint8_t*>(ConCommand_Cvar());

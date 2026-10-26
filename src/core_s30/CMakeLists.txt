@@ -40,6 +40,8 @@ add_sources( SOURCE_GROUP "Overlay"
 add_sources( SOURCE_GROUP "Net"
     "bridge_handshake_s30.cpp"
     "bridge_handshake_s30.h"
+    "bridge_signon_s30.cpp"
+    "bridge_signon_s30.h"
     "net_diag_s30.cpp"
     "net_diag_s30.h"
 )

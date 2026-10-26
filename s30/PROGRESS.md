@@ -87,6 +87,37 @@
 - Not yet known whether S30 checks its own image or import table (B6).
 - Flowstate client/UI scripts vs S30 natives: biggest unknown (B3).
 
+### 2026-10-26: dedi up on S30 data
+- Server scripts adapted to S30 data until the staging map spawns cleanly: entitlements.rson in
+  `vpk/server_mp_common` (S30's, plus `pc`/`pc_offer` the S3 loader requires and the 11 entitlement flavors S30's rson
+  omits; `entitlements_dedi.py`), ranked `followingPeriod` array, S30 challenge modes, loot weapon mods
+  (`loot_weapon_mods.py`; the S3 weapon parser keeps 31 mods per weapon, r5apex_ds+0x8E98C7).
+- The SDK's error-model fallback works: missing models are logged and replaced instead of hanging the dedi.
+
+### 2026-10-26: S30 net message map, B1 (docs/11)
+- S30 `ConnectionStart` 0x2FA120 registers 59 messages through `RegisterMessage` 0x2A1580 (array at netchan
+  +0x2180, count +0x2198, indexed by `GetType`); S21: 0x2D1B10 / 0x27A580 / +0x2190 / +0x21A8, 52 messages.
+- S21 IDB built (`analysis/idb/r5apex_dx12_s21.exe.i64`) to compare bodies.
+- S21 → S30 server-to-client: 3..9 same, 10..45 +1, 46..54 +3. Two signals agree (registration order + sizes, and
+  the handler method each `Process` calls). Decompiled readers: every message the dedi sends reads the same,
+  except **svc_Print**, which gains a leading 1-bit flag.
+- Client-to-server found by vtable scan: clc_Move 57 → 64 (writer identical), ClientTick 65 → 72 (**now three
+  values**), ClientSayText 66 → 73, ClaimClientSidePickup 63 → 70.
+- Dedi → S30 table written (docs/11).
+- Tools: `pe_netmsg.py`, `pe_netmsg_vtables.py`, `ida_netmsg.py`, `netmsg_match.py`, `ida_decomp_dump.py`,
+  `netmsg_bodies.py`, `ida_autoanalyze.py`.
+
+### 2026-10-26: stage 2, step 1: the dedi hands the S30 engine its connection (docs/12)
+- `bridge_connect` also runs the engine's native connect (`net_usesocketsforloopback 1`,
+  `cl_strict_transport_checks 0`; both DEVELOPMENTONLY, flag cleared on these two only). The engine's datagrams to
+  the dedi are dropped; on CONNACCEPT it gets its native type-12 "server map" reply on its own socket
+  (`recvfrom` route, `NET_DecodeDatagram` 0x2A5870 detour for plaintext).
+- Result: `FullConnect` builds the netchannel, signon 2, `maps/mp_rr_canyonlands_staging_mu1.bsp`, Firing Range
+  loading screen, from one `bridge_connect`. New `sdk_clstate`.
+- Found: the workspace dedi crashes after `ready` with `+launchplaylist survival_firingrange`, not with `+map`.
+
 ## Next action
-Server scripts vs S30 data (one error left at map spawn), then stage 2 (signon): map S30's net message table
-(B1) and the CNetChan/CClientState layouts, and feed the dedi's netchannel into the S30 engine.
+Stage 2, step 2: route the dedi's netchannel packets to the engine socket and replace `CNetChan::ProcessPacket` with
+S3 header parsing plus dispatch into S30's message array (docs/11 type map; Print: extra bit). C2S: the engine's
+netchannel output translated to S3 (ClientTick: three values). Still to compare: the usercmd delta encoding inside
+clc_Move.

@@ -20,6 +20,7 @@
 #include "thirdparty/detours/include/detours.h"
 #include "s30_log.h"
 #include "net_guard_s30.h"
+#include "bridge_signon_s30.h"
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -220,6 +221,12 @@ static decltype(&WSARecvFrom) v_WSARecvFrom = WSARecvFrom;
 
 static int WSAAPI h_recvfrom(SOCKET s, char* pBuf, int nLen, int nFlags, sockaddr* pFrom, int* pnFromLen)
 {
+	const int nInjected = S30Signon_InjectRecv(s, pBuf, nLen, pFrom, pnFromLen);
+	if (nInjected > 0)
+	{
+		NetGuard_TracePacket("recv(bridge)", pFrom, pBuf, nInjected);
+		return nInjected;
+	}
 	const int nResult = v_recvfrom(s, pBuf, nLen, nFlags, pFrom, pnFromLen);
 	if (nResult > 0)
 		NetGuard_TracePacket("recv", pFrom, pBuf, nResult);
@@ -238,6 +245,8 @@ static int WSAAPI h_WSARecvFrom(SOCKET s, LPWSABUF pBufs, DWORD nBufs, LPDWORD p
 
 static int WSAAPI h_sendto(SOCKET s, const char* pBuf, int nLen, int nFlags, const sockaddr* pTo, int nToLen)
 {
+	if (S30Signon_FilterSendTo(s, pBuf, nLen, pTo, nToLen))
+		return nLen; // engine datagram to the dedi: the bridge speaks S3 for it
 	if (!NetGuard_IsLoopback(pTo))
 	{
 		char sz[96];
@@ -375,11 +384,10 @@ bool S30NetGuard_Install(void)
 	DetourAttach(&reinterpret_cast<PVOID&>(v_gethostbyname), h_gethostbyname);
 	DetourAttach(&reinterpret_cast<PVOID&>(v_WSAIoctl), h_WSAIoctl);
 	s_bTrace = strstr(GetCommandLineA(), "-s30_nettrace") != nullptr;
+	// recvfrom always: the bridge delivers dedi datagrams to the engine through it.
+	DetourAttach(&reinterpret_cast<PVOID&>(v_recvfrom), h_recvfrom);
 	if (s_bTrace)
-	{
-		DetourAttach(&reinterpret_cast<PVOID&>(v_recvfrom), h_recvfrom);
 		DetourAttach(&reinterpret_cast<PVOID&>(v_WSARecvFrom), h_WSARecvFrom);
-	}
 	if (v_WinHttpConnect)
 		DetourAttach(&reinterpret_cast<PVOID&>(v_WinHttpConnect), h_WinHttpConnect);
 	if (v_InternetConnectW)
