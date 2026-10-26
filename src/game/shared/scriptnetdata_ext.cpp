@@ -209,6 +209,28 @@ int ScriptNetData_FindVarSlot(const char* name, int expectedCategory)
 	return ScriptNetData_FindVarSlotAndType(name, expectedCategory, nullptr);
 }
 
+int ScriptNetData_RegisteredSignature(uint64_t* pHashSum)
+{
+	static constexpr int BUCKET_COUNT = 250;
+	int count = 0;
+	uint64_t sum = 0;
+	if (g_pClientNetVars)
+	{
+		for (int i = 0; i < BUCKET_COUNT; ++i)
+		{
+			const uint64_t hash = *reinterpret_cast<const uint64_t*>(g_pClientNetVars + CLIENT_NETVAR_ENTRY_SIZE * i);
+			if (hash)
+			{
+				++count;
+				sum += hash;
+			}
+		}
+	}
+	if (pHashSum)
+		*pHashSum = sum;
+	return count;
+}
+
 // TriggerGlobalChangeCallbacks: fire all registered netvar change callbacks for the GLOBAL entity.
 void ScriptNetDataExt_TriggerGlobalChangeCallbacks()
 {

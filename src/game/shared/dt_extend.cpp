@@ -27,6 +27,7 @@
 #include "common/global.h" // host_timescale
 #include "game/server/consumable_inv.h"
 #include "game/shared/activity_s3_to_s21.h" // Bridge_ClientIsS30
+#include "game/server/sndc_s30_remap.h"
 #include "game/server/jetdrive.h"
 #include "game/server/weapon_custom_activity.h"
 #include "game/server/player_launch.h"
@@ -9679,9 +9680,16 @@ static char Hook_SendTable_Init(void** tables, int count)
 		// (ConVar-gated sdk_conn_quality_dt, default on).
 		DTExtend_BuildConnectionQualityIndex(tables, count);
 
+		// +bridge_client_set s30: the script netvar arrays in the S30 client's counts, each
+		// element read from the dedi slot of the same name (sndc_s30_remap). Before the
+		// deep-clone so its wrapper snapshots carry the reshaped props.
+		SNDCS30_ReshapeSendTables(tables, count, false);
+
 		// S21 wrapper deep-clone.
 		// MUST be the last structural pass: every wrapper is a snapshot of a native tree, and the S21 client resolves a DataTable prop's child BY TABLE NAME over the tables it received, so it binds the NATIVE table of that name -- not our copy.
 		DTExtend_PostApplyS21Overrides(tables, count);
+		// The tables the deep-clone made (PLAYER_EXCLUSIVE_EXPANDED, in S21's layout).
+		SNDCS30_ReshapeSendTables(tables, count, true);
 
 // [PARENT-FIX-FINAL] the ONE authoritative global parentTable pass.
 // Every structural pass above (PostApplyS21Overrides / Relocate / Copy / InsertWrapper / Bracketize / Offhand / DeathField) memcpy's SendProps or clones foreign templates, leaving +0x08 pointing at a foreign table; the encoder then resolves structBase from a foreign class index (the changelevel pack memmove-AV class).

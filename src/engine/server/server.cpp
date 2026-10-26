@@ -20,6 +20,7 @@
 #include "networksystem/spire.h"
 #include "networksystem/bansystem.h"
 #include "game/shared/scriptnetdata_limits.h"
+#include "game/server/sndc_s30_remap.h"
 #include "ebisusdk/EbisuSDK.h"
 #include "public/edict.h"
 #include "pluginsystem/pluginsystem.h"
@@ -640,6 +641,8 @@ void CServer::BroadcastMessage(CNetMessage* const msg, const bool onlyActive, co
 //---------------------------------------------------------------------------------
 void CServer::RunFrame(CServer* pServer)
 {
+	// S30 script netvar slot maps, before this frame's snapshots.
+	SNDCS30_Frame();
 	CServer__RunFrame(pServer);
 
 	// Flush dirty SNDC extension vars to clients via NET_ScriptMessage

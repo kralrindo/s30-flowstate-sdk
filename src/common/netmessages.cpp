@@ -383,6 +383,7 @@ void V_NetMessages::Detour(const bool bAttach) const
 
 #include "engine/client/client.h"
 #include "game/shared/scriptremotefunctions_server.h"
+#include "game/server/sndc_s30_remap.h"
 
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -595,6 +596,12 @@ bool NET_ScriptMessage::Process(void)
 				if (m_pMessageHandler && !ScriptRemoteServer_ProcessNamedMessage(static_cast<CClient*>(m_pMessageHandler),
 					this, reinterpret_cast<const uint8_t*>(m_Buffer), nFrameBits / 8))
 					Warning(eDLL_T::SERVER, "NET_ScriptMessage: named call not processed\n");
+			}
+			else if (magic == BRIDGE_C2S_NETVARTABLE_MAGIC)
+			{
+				// The S30 client's script netvar table (sndc_s30_remap); m_Buffer from byte 0.
+				if (!SNDCS30_OnClientTable(static_cast<CClient*>(m_pMessageHandler), reinterpret_cast<const uint8_t*>(m_Buffer), nFrameBits / 8))
+					Warning(eDLL_T::SERVER, "NET_ScriptMessage: malformed netvar table frame\n");
 			}
 			else if (magic == 0x31545242u && m_DataIn.GetNumBitsLeft() >= 16)
 			{

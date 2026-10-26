@@ -189,3 +189,20 @@ is proven.
 3. Fix A: netvar remap, dedi table frame + client array adapters. This is the large one, and the one most HUD
    pieces depend on: game state, squad, evo/upgrade points, ring timers.
 4. An S30 schema for the dedi rebuild (longer term).
+
+## Status (2026-10-26)
+- **Fix A done**, as a dedi-side reshape rather than client adapters:
+  - Client `bridge_netvars_s30.cpp` hooks S30's registration worker (`0xB80210`) for the names (S30 keys its table
+    by its own string hash, not the dedi's) and sends its table by name, C2S `'NVT1'` frames.
+  - Dedi `sndc_s30_remap.cpp` sends every `DT_ScriptNetData*` array with S30's counts (`m_times` renamed
+    `m_float32s`); each element's proxy reads the dedi slot of the same name and encodes it with the dedi's own
+    element proxy (traced: the encoder passes `pData` = element k, `iElement` = k). Runs in `dt_extend` before and
+    after the S21 deep-clone (PLAYER_EXCLUSIVE_EXPANDED only exists after it). The table is saved to
+    `platform/cfg/s30_netvars.bin` so the maps are ready at map start.
+  - Olympus: 181 of 227 S30 vars mapped; 45 are S30-only (logged `not on the dedi`), the three player/squad counts
+    are widened from the dedi's 10-bit ranges, `HealthRegen_PlayerRegenStartDelay` (dedi time, S30 float range) is
+    not sent.
+  - Verified in game: inventory (TAB) and map (M) open.
+- **Fix B done:** `PreGamePreview` inserted in the dedi's `_settings.nut`; the arenas RUI +1 shim removed
+  (`sh_gamemode_arenas.nut`). Both backed up as `.s21`.
+- Fix C: open.

@@ -42,6 +42,7 @@
 #include "bridge_predcensus_s30.h"
 #include "bridge_predtol_s30.h"
 #include "engine/client/net_bridge_skip.h" // engine-free S3 message body widths
+#include "bridge_netvars_s30.h"
 #include "concommand_s30.h"
 #include "console_s30.h"
 #include "s30_log.h"
@@ -1579,6 +1580,7 @@ static bool Netchan_OnSnapshot(uint8_t* pChan, S30BitReader_t& r)
 		ReleaseSRWLockExclusive(&s_lock);
 		S30Props_OnSnapshot();
 		S30PredTol_OnSnapshot();
+		S30NetVars_OnSnapshot();
 		S30ScriptRemote_OnSnapshot(nTick1);
 	}
 	return true; // the payload is consumed either way: the stream stays aligned
@@ -2365,6 +2367,7 @@ void S30Netchan_Begin(S30NetchanSend_t pfnSend)
 	s_nPendingMoveBits = 0;
 	memset(s_c2sRing, 0, sizeof(s_c2sRing));
 	S30C2S_Reset();
+	S30NetVars_Reset();
 	s_bPendingUserInfo = false;
 	s_nUserInfoSendsLeft = 0;
 	s_nLastFlushMs = 0;

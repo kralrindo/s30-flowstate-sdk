@@ -41,6 +41,10 @@ int ScriptNetData_FindVarSlot(const char* name, int expectedCategory);
 // FindVarSlot returns an index into a type-specific array; callers must use +0x0C SNVT.
 int ScriptNetData_FindVarSlotAndType(const char* name, int expectedCategory, int* outType);
 
+// The registered vars (client-chain table): count, and a sum of their hashes that
+// changes when the set does.
+int ScriptNetData_RegisteredSignature(uint64_t* pHashSum);
+
 // Lifecycle — clear entity pointer on map shutdown
 void ScriptNetDataExt_LevelShutdown();
 
