@@ -131,3 +131,13 @@ S30 BSP, with 0 unresolved pak dependencies. Open:
   some too (the log is sampled), not this many.
 - The old-name rows/files (`mp_ability_space_elevator_tac.txt`, its `arenas_items.csv` row next to the
   S30-name row) are still there.
+
+## Engine limits hit by S30 content (2026-10-26)
+
+| limit | where | fix |
+|---|---|---|
+| `SkinNames` table 1024 | SDK-created (`skinnames_table_inject.cpp`) | 4096 entries (S30: ~1300 character skin names) |
+| `ParticleEffectNames` table 4096 (stock 2048) | engine `r5apex_ds+0xD587DD`, SDK grow | 8192; `m_effectIndex` width derived from it (14 bits, signed) |
+| legendary weapon skin slots 32 (stock 8) | `weapon_legendary_ext.cpp` | 64 (S30 max: R-301 42) |
+| 256 bones per model | `CStudioHdr` init `r5apex_ds+0x33D93A`: two inline 256-entry per-bone arrays (`+0x48`, `+0x448`), no bound check; 263 bones overwrite `+0x858` | not raised. The one S30 model over 256 (`ptpov_sparrow_tact.rmdl`, 263 bones) was taken out of `mp_weapon_sonar_dart.txt` by the user |
+| missing model = fatal dialog | SDK fallback only cached via `FindMDL`; `error.rmdl` names itself `mdl/error` | `GetErrorModel` resolves `mdl/error.rmdl` by name (not yet exercised) |
