@@ -117,6 +117,19 @@ builds a local `oo2core_9_win64.dll` from RSX's static `oo2core_x64.lib` (passed
   already had both `mp_ability_space_elevator_tac.txt` and S30's `mp_ability_horizon_tac_space_elevator.txt`
   (same identifying keys), and `_weapon_utility.nut` (stickiness table columns) and the copycat kit's
   `disguise_ability` now use the S30 name (originals `.s21`).
+- **Entitlements come from the VPK.** The dedi reads `scripts/entitlements.rson` from
+  `vpk/server_mp_common` (a loose `platform/scripts/entitlements.rson` is not used). S30's copy (182
+  entries, common_early guid `0x35F0A27DA4165BAD`) goes through `rson_quote.py` and
+  `entitlements_dedi.py` and is repacked into that VPK (pair kept as `.s21`). The S3 loader
+  (`r5apex_ds+0x234A00`) requires `pc` and `pc_offer` in every block (fatal `Invalid entitlement` /
+  `Invalid offerID` otherwise) and reads no other key; S30's three `enum`+`name` battle-pass blocks get
+  `pc` = name, `pc_offer` = "". The SDK already lifts the 64-entry cap and skips the CRC64 check.
+  S30 registers 11 entitlement item flavors its own rson does not list (`PSPLUS_PACK_28`..`32`,
+  `XBOX_GOLD_PACK_17`..`22`; no S30 patch pak carries a newer rson) and the server scripts look every
+  flavor's `enum` up in the const table, so `entitlements_dedi.py` appends one block per such flavor
+  from its `settings/itemflav/entitlement` export (the rson keys the flavor has; after the S30 entries,
+  which keep their indices): 193 entries (user's choice over a script guard).
+  `revpk -unpack` drops files whose folder does not exist yet: create every manifest folder first.
 - Skipped, with reasons in `build/missing.txt`: one gladcard clip whose asqd is outside the common
   paks (its single reference from the RE-45 model is dropped).
 
