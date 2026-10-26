@@ -92,6 +92,40 @@ ANIMS = OUT + "/work/anim_s3"
 BUILD = OUT + "/build"
 LOGS = OUT + "/logs"
 
+# Per-map mode (docs/22): `py dedi_paks.py --map <map> [--server <dedi dir>] [step ...]` builds
+# only <map>.rpak, in asset_pipeline/s30_dedi_maps/<map>. The shared paks are taken as built:
+# their RSX listings name assets and give dependencies, their build lists say what the dedi
+# holds when the map pak loads, and their exported rigs drive the map's sequences on common rigs.
+MAP = None
+BASE_LISTS, BASE_BUILD, BASE_EXPORT = LISTS, BUILD, EXPORT
+SHARED_PAKS = ["common_early", "common_roots", "common", "common_mp", "mp_lobby", "root_lgnd_skins"]
+LIST_GROUPS = GROUPS   # the groups `list` and `export` run on
+
+
+def map_mode(name, server_dir):
+    global MAP, OUT, LISTS, EXPORT, WORK, MODEL_SRC, MODELS, ANIM_SRC, ANIMS, BUILD, LOGS
+    global TARGETS, LOAD_ORDER, GROUPS, LIST_GROUPS, RIG_DONORS, SERVER_PAKS
+    if not os.path.isfile(S30_PAKS + "/%s.rpak" % name):
+        sys.exit("no S30 pak %s.rpak" % name)
+    MAP = name
+    OUT = WS + "/asset_pipeline/s30_dedi_maps/" + name
+    LISTS, EXPORT, WORK = OUT + "/inv/lists", OUT + "/export", OUT + "/work"
+    MODEL_SRC = WORK + "/mdl_src"
+    MODELS = WS + "/asset_pipeline/s30_dedi_maps/mdl_v54"   # shared by every map: the hash cache keeps reuse exact
+    ANIM_SRC, ANIMS = WORK + "/anim_src", WORK + "/anim_s3"
+    BUILD, LOGS = OUT + "/build", OUT + "/logs"
+    TARGETS = [(name, [name], None)]
+    LOAD_ORDER = [p for p in LOAD_ORDER if p != "mp_rr_canyonlands_staging_mu1"] + [name]
+    LIST_GROUPS = [(name, [name])]
+    GROUPS = [g for g in GROUPS if g[0] != "staging"] + LIST_GROUPS
+    RIG_DONORS = []
+    if server_dir:
+        SERVER_PAKS = server_dir.replace("\\", "/").rstrip("/") + "/paks/Win64_server"
+
+
+def list_dir(group):
+    return LISTS if MAP and group == MAP else BASE_LISTS
+
 
 def fwd(name):
     return name.replace("\\", "/")
@@ -115,7 +149,7 @@ def rows():
     """Every S30 listing row, tagged with the RSX group it came from."""
     out = []
     for name, _ in GROUPS:
-        for r in read_csv("%s/%s.csv" % (LISTS, name)):
+        for r in read_csv("%s/%s.csv" % (list_dir(name), name)):
             r["group"] = name
             out.append(r)
     return out
@@ -152,7 +186,7 @@ def pak_paths(stems):
 
 def step_list():
     os.makedirs(LISTS, exist_ok=True)
-    for name, stems in GROUPS:
+    for name, stems in LIST_GROUPS:
         run([RSX, "-nogui", "-nocachedb", "-noanimparse", "--list", "%s/%s.csv" % (LISTS, name), "--listformat", "csv",
              "--depfilepath", "%s/%s.deps.txt" % (LISTS, name), "--depfileformat", "adjlist"] + pak_paths(stems),
             "%s/rsx_list_%s.log" % (LOGS, name))
@@ -160,10 +194,40 @@ def step_list():
 
 def step_export():
     shutil.rmtree(EXPORT, ignore_errors=True)
-    for name, stems in GROUPS:
+    for name, stems in LIST_GROUPS:
         run([RSX, "-nogui", "-export", "-exportfullpaths", "-nocachedb", "-noanimparse",
              "--exporttypes", "mdl_,arig,aseq,asqd,dtbl,stgs,stlt,txls", "--exportdir", EXPORT] + pak_paths(stems),
             "%s/rsx_export_%s.log" % (LOGS, name))
+    # Map mode: a map pak's settings (mp_rr_canyonlands_hu_avt: 10 settings/scriptAnimWindow
+    # assets its sequences name) export only with their layouts, which are in the shared paks.
+    # Without them RSX writes nothing, the assets fall out of the build, and the dedi's anim
+    # window list keeps 10 NULL entries it dereferences on the first frame (r5apex_ds+0xD58DF7).
+    if MAP:
+        stgs = [r["guid"] for r in read_csv("%s/%s.csv" % (LISTS, MAP)) if r["type"] == "stgs"]
+        if stgs:
+            guid_file = LISTS + "/stgs_guids.txt"
+            open(guid_file, "w").write("".join("%s\n" % g for g in stgs))
+            run([RSX, "-nogui", "-export", "-exportfullpaths", "-nocachedb", "-noanimparse", "--exporttypes", "stgs",
+                 "--exportguids", guid_file, "--exportdir", EXPORT] + pak_paths(["common_early", "common", MAP]),
+                "%s/rsx_export_stgs_%s.log" % (LOGS, MAP))
+            print("export: %d settings with the shared layouts" % len(stgs))
+            # RePak reads each setting's layout (json/csv + sub-layout folder) from the assets
+            # dir; the layouts stay in the shared paks, the map pak only references them.
+            layouts = set()
+            for root, _, files in os.walk(EXPORT + "/settings"):
+                for f in files:
+                    if f.endswith(".json"):
+                        m = re.search(r'"layoutAsset"\s*:\s*"([^"]+)"', open(os.path.join(root, f), encoding="utf-8").read())
+                        if m:
+                            layouts.add(fwd(m.group(1))[:-len(".rpak")] if m.group(1).endswith(".rpak") else fwd(m.group(1)))
+            for stem in sorted(layouts):
+                for ext in (".json", ".csv"):
+                    if os.path.isfile(BASE_EXPORT + "/" + stem + ext):
+                        os.makedirs(os.path.dirname(EXPORT + "/" + stem), exist_ok=True)
+                        shutil.copyfile(BASE_EXPORT + "/" + stem + ext, EXPORT + "/" + stem + ext)
+                if os.path.isdir(BASE_EXPORT + "/" + stem):
+                    shutil.copytree(BASE_EXPORT + "/" + stem, EXPORT + "/" + stem, dirs_exist_ok=True)
+            print("export: %d settings layouts copied from the shared export" % len(layouts))
     # A pak exported without the paks it references names those assets by guid in the
     # model/rig .rson sidecars (root skin models -> common rigs); name them.
     names = {g: n for n, g in name_map(rows()).items()}
@@ -320,6 +384,9 @@ def step_anims():
         open(dst + ".rson", "w", encoding="utf-8").write(text)
         n += 1
     print("anim source: %d self-rigged models" % n)
+    if not os.path.isdir(ANIM_SRC):
+        print("anims: none in these paks")   # map paks with models only (mp_rr_freedm_skulltown)
+        return
     run([ANIMCONV, ANIM_SRC, "-i", "30", "-o", "3", "-outpath", ANIMS, "-nopause", "-ne"], LOGS + "/animconv.log")
 
     # R5-AnimConv's parallel sequence parse faults on a few clips in a full run that convert
@@ -384,7 +451,7 @@ def read_deps(names):
     """guid -> set of guids it depends on, from the RSX dependency lists of every group."""
     deps = {}
     for name, _ in GROUPS:
-        for line in open("%s/%s.deps.txt" % (LISTS, name), encoding="utf-8", errors="replace"):
+        for line in open("%s/%s.deps.txt" % (list_dir(name), name), encoding="utf-8", errors="replace"):
             parts = line.rstrip("\r\n").split(",")
             g = guid_of(parts[0], names) if parts and parts[0] else None
             if g is None:
@@ -480,6 +547,9 @@ def step_buildlist():
     contents = {p: {int(e["$guid"], 16) for e in es} for p, es in per_pak.items()}
     for p, lst in KEPT.items():
         contents[p] = {int(r["guid"], 16) for r in read_csv(lst)}
+    if MAP:
+        for p in SHARED_PAKS:
+            contents[p] = {int(e["$guid"], 16) for e in json.load(open("%s/%s.json" % (BASE_BUILD, p)))["files"]}
     manifests = []
     for pak, _, _ in TARGETS:
         upto = LOAD_ORDER[:LOAD_ORDER.index(pak) + 1]
@@ -540,6 +610,8 @@ def step_install():
         bak = dst + ".s21"
         if os.path.isfile(dst) and not os.path.isfile(bak):
             os.replace(dst, bak)
+        if os.path.isfile(dst):
+            os.remove(dst)   # never write through a hard link (a test dedi linked to the workspace one)
         shutil.copyfile(os.path.join(BUILD, "paks", pak + ".rpak"), dst)
         print("installed", dst)
 
@@ -548,7 +620,19 @@ STEPS = {"list": step_list, "export": step_export, "models": step_models, "anims
          "buildlist": step_buildlist, "repak": step_repak, "install": step_install}
 
 if __name__ == "__main__":
-    for s in sys.argv[1:] or list(STEPS):
+    args = sys.argv[1:]
+    server = None
+    if "--server" in args:
+        i = args.index("--server")
+        server = args[i + 1]
+        del args[i:i + 2]
+    if "--map" in args:
+        i = args.index("--map")
+        map_mode(args[i + 1], server)
+        del args[i:i + 2]
+    elif server:
+        SERVER_PAKS = server.replace("\\", "/").rstrip("/") + "/paks/Win64_server"
+    for s in args or list(STEPS):
         if s not in STEPS:
             sys.exit("unknown step %s (%s)" % (s, ", ".join(STEPS)))
         print("== %s" % s)

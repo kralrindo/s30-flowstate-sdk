@@ -99,7 +99,8 @@ class Map:
         for ent in glob.glob(bsp + "/*.ent"):
             names |= set(map_models.entity_models(open(ent, encoding="latin1").read()))
         packed = set()
-        for f in glob.glob(DEDI_BUILD + "/*.json"):
+        # the shared paks, plus this map's own pak when dedi_paks.py --map built it (docs/22)
+        for f in glob.glob(DEDI_BUILD + "/*.json") + glob.glob(WS + "/asset_pipeline/s30_dedi_maps/%s/build/*.json" % self.m):
             if "build_list" not in os.path.basename(f):
                 packed |= {e["_path"].lower() for e in json.load(open(f))["files"] if e["_type"] == "mdl_"}
         # editor_effect_node_* are editor placeholders the game never spawns (user, 2026-10-26)
@@ -135,6 +136,8 @@ class Map:
                 sys.exit("revpk wrote no " + src)
             if os.path.isfile(dst) and not os.path.isfile(dst + ".s21"):
                 os.replace(dst, dst + ".s21")
+            if os.path.isfile(dst):
+                os.remove(dst)   # never write through a hard link (a test dedi linked to the workspace one)
             shutil.copy2(src, dst)
             print("installed", dst)
 
@@ -234,8 +237,13 @@ STEPS = ["export", "stage", "convert", "closure", "vpk", "install"]
 EXTRA = ["gate", "common"]
 
 if __name__ == "__main__":
-    m = Map(sys.argv[1])
-    for s in sys.argv[2:] or STEPS:
+    args = sys.argv[1:]
+    if "--server" in args:   # install into another dedi copy (docs/22: the map-port test dedi)
+        i = args.index("--server")
+        SERVER = args[i + 1].replace("\\", "/").rstrip("/")
+        del args[i:i + 2]
+    m = Map(args[0])
+    for s in args[1:] or STEPS:
         if s not in STEPS + EXTRA:
             sys.exit("unknown step %s (%s)" % (s, ", ".join(STEPS + EXTRA)))
         print("== %s" % s)

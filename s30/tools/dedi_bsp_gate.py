@@ -27,6 +27,9 @@ import struct
 import sys
 
 GAME_LUMP = 0x23
+# Lumps whose record size is known: a gcd over a few references can be a multiple of it
+# (mp_rr_olympus_mu3 ships 3390 bytes of packed vertices; the references happen to be multiples of 48).
+RECORD_SIZE = {0x14: 6}   # LUMP_PACKED_VERTICES: int16 x, y, z
 
 
 def load(folder, name=None):
@@ -114,6 +117,7 @@ def main():
         g = 0
         for n in lens:
             g = math.gcd(g, n)
+        g = RECORD_SIZE.get(i, g)
         if g > 1 and m["files"][i] % g:
             fail("lump %02x: %d bytes not a multiple of %d (gcd of %s)" % (i, m["files"][i], g, lens))
     sp, err = sprp(m)
