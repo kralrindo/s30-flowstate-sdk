@@ -42,11 +42,20 @@ enum AnimField_t
 	FIELD_START_TIME,
 	FIELD_START_CYCLE,
 	FIELD_RATE,
+	FIELD_WEAPSTATE,   // DT_WeaponX: the dedi's state, ordinals translated for S21
+	FIELD_CUSTOM_ACT,  // DT_WeaponX: custom activity (inspect, ...)
+	FIELD_PRED_SEQ,    // DT_WeaponX_PredictingClientOnly: the owner's predicted sequence
 	FIELD_COUNT
 };
 // m_animSequence etc. on the wire, m_currentFrameBaseAnimating.animSequence etc. in the datamap.
-static const char* const s_pszFieldSuffix[FIELD_COUNT] = { "animSequence", "animStartTime", "animStartCycle", "animPlaybackRate" };
-static const char* const s_pszFieldShort[FIELD_COUNT] = { "seq", "start", "cycle", "rate" };
+static const char* const s_pszFieldSuffix[FIELD_COUNT] = { "animSequence", "animStartTime", "animStartCycle", "animPlaybackRate",
+	"weapState", "customActivity", "animSequencePredictingClientOnly" };
+static const char* const s_pszFieldShort[FIELD_COUNT] = { "seq", "start", "cycle", "rate", "wstate", "cact", "pseq" };
+
+static bool AnimTrace_IsIntField(int nField)
+{
+	return nField == FIELD_SEQUENCE || nField == FIELD_WEAPSTATE || nField == FIELD_CUSTOM_ACT || nField == FIELD_PRED_SEQ;
+}
 
 struct TracedEntity_t
 {
@@ -59,7 +68,7 @@ struct TracedEntity_t
 	bool bFrame;
 	volatile LONG nWireSinceFrame;     // wire writes since the last frame sample
 };
-static TracedEntity_t s_entities[16];
+static TracedEntity_t s_entities[32];
 static int s_nEntities = 0;
 static SRWLOCK s_lock = SRWLOCK_INIT;
 static volatile LONG s_bEnabled = 1;
@@ -89,10 +98,18 @@ static float AnimTrace_Clock(void)
 	return nBase ? *reinterpret_cast<const float*>(nBase + kClientStateClock) : 0.0f;
 }
 
+// The Int16 stores share their dword with the next field.
+static uint32_t AnimTrace_Mask(int nField, uint32_t v)
+{
+	return AnimTrace_IsIntField(nField) && nField != FIELD_WEAPSTATE ? v & 0xFFFF : v;
+}
+
 static void AnimTrace_Format(char* psz, size_t n, int nField, uint32_t v)
 {
-	if (nField == FIELD_SEQUENCE)
+	if (nField == FIELD_WEAPSTATE)
 		snprintf(psz, n, "%d", static_cast<int>(v));
+	else if (AnimTrace_IsIntField(nField))
+		snprintf(psz, n, "%d", static_cast<int16_t>(v)); // Int16 stores (proxy 0x605AC0)
 	else
 	{
 		float f;
@@ -123,11 +140,16 @@ static void AnimTrace_OnReceive(WrappedProp_t& w, const uint8_t* pInfo, uint8_t*
 	uint32_t nBefore = 0;
 	if (pOut)
 		memcpy(&nBefore, pOut, sizeof(nBefore));
-	w.pfnOriginal(pInfo, pStruct, pOut);
+	nBefore = AnimTrace_Mask(w.nField, nBefore);
+	if (w.pfnOriginal)
+		w.pfnOriginal(pInfo, pStruct, pOut);
+	else if (pOut)
+		memcpy(pOut, pInfo + DECODE_VALUE, sizeof(int32_t)); // the decoder's own store for a proxy-less Int
 	if (!pOut || !s_bEnabled)
 		return;
 	uint32_t nValue = 0;
 	memcpy(&nValue, pOut, sizeof(nValue));
+	nValue = AnimTrace_Mask(w.nField, nValue);
 
 	AcquireSRWLockExclusive(&s_lock);
 	TracedEntity_t* const e = AnimTrace_Entity(pStruct, w.pszTable);
@@ -171,7 +193,7 @@ static const WrapperFn_t s_pfnWrappers[32] =
 
 static bool AnimTrace_IsTracedTable(const char* pszTable)
 {
-	return pszTable && (strstr(pszTable, "FirstPersonProxy") || strstr(pszTable, "ViewModel"));
+	return pszTable && (strstr(pszTable, "FirstPersonProxy") || strstr(pszTable, "ViewModel") || !strcmp(pszTable, "DT_WeaponX"));
 }
 
 static int AnimTrace_FieldOf(const char* pszName)
@@ -205,7 +227,10 @@ void S30AnimTrace_OnDecoder(uint8_t* pDecoder)
 		const char* const pszName = *reinterpret_cast<const char* const*>(pProp + RP_NAME);
 		const int nField = AnimTrace_FieldOf(pszName);
 		const RecvProxy_t pfnOriginal = *reinterpret_cast<RecvProxy_t*>(pProp + RP_PROXY);
-		if (nField < 0 || !pfnOriginal || s_nWrapped >= static_cast<int>(sizeof(s_wrapped) / sizeof(s_wrapped[0])))
+		// Proxy-less props are wrapped only for m_weapState (a plain 32-bit Int store);
+		// the animation fields without one are stored through a redirect this does not know.
+		const bool bPlainInt = !pfnOriginal && nField == FIELD_WEAPSTATE && *reinterpret_cast<const int*>(pProp + RP_TYPE) == 0;
+		if (nField < 0 || (!pfnOriginal && !bPlainInt) || s_nWrapped >= static_cast<int>(sizeof(s_wrapped) / sizeof(s_wrapped[0])))
 			continue;
 		WrappedProp_t& w = s_wrapped[s_nWrapped];
 		memset(w.prop, 0, sizeof(w.prop));
@@ -238,6 +263,7 @@ void S30AnimTrace_OnFrame(void)
 				if (e.pField[f])
 				{
 					memcpy(&cur[f], e.pField[f], sizeof(cur[f]));
+					cur[f] = AnimTrace_Mask(f, cur[f]);
 					bAny = true;
 				}
 			}
@@ -265,8 +291,8 @@ void S30AnimTrace_OnFrame(void)
 						strncat_s(szChanged, " ", _TRUNCATE);
 					}
 				}
-				S30LogFile("[ANIM1P] frame e%d seq %s start %s cycle %s rate %s reset %.4f | changed %s| by %s | clock %.4f\n",
-					i, sz[FIELD_SEQUENCE], sz[FIELD_START_TIME], sz[FIELD_START_CYCLE], sz[FIELD_RATE],
+				S30LogFile("[ANIM1P] frame e%d seq %s start %s cycle %s rate %s wstate %s cact %s pseq %s reset %.4f | changed %s| by %s | clock %.4f\n",
+					i, sz[FIELD_SEQUENCE], sz[FIELD_START_TIME], sz[FIELD_START_CYCLE], sz[FIELD_RATE], sz[FIELD_WEAPSTATE], sz[FIELD_CUSTOM_ACT], sz[FIELD_PRED_SEQ],
 					*reinterpret_cast<const float*>(e.pStruct + kResetEventsTime), szChanged,
 					nWire && bAllWire ? "wire" : nWire ? "wire+client" : "client", AnimTrace_Clock());
 			}

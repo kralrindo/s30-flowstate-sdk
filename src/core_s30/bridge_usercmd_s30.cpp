@@ -33,6 +33,7 @@
 #include "bridge_bits_s30.h"
 #include "s30_log.h"
 #include "s30_pattern.h"
+#include "game/shared/activity_s30_enum.h"
 
 static const char* const s_pszPatternWriteMoveCmds = "48 89 5C 24 ?? 48 89 6C 24 ?? 56 41 56 41 57 B8";
 static const char* const s_pszPatternSendNetMsg =
@@ -314,6 +315,36 @@ static uint8_t s_nPrevImpulseWire = 0;
 static const uint8_t kImpulseStartEnergize = 0x80; // the S21 bridge's kS21ExtraFlag_StartEnergize
 static const uint8_t kImpulseToggleAkimbo = 0x40;  // kS21ExtraFlag_ToggleAkimbo
 
+// weaponCustomActivity in the S21 bridge's numbering: the dedi's usercmd intake
+// passes only S21 ACT_VM_WEAPON_INSPECT (564) with cheats off and translates
+// S21 -> S3 after that (game/shared/usercmd.cpp). S30's own number (562) was
+// cleared there, so every weapon inspect was cancelled. Matched by name.
+static int Usercmd_ActivityS30ToS21(int nS30)
+{
+	static int s_map[4096];
+	static bool s_bBuilt = false;
+	if (!s_bBuilt)
+	{
+		for (int i = 0; i < 4096; ++i)
+			s_map[i] = i;
+		for (const S21ActivityEntry& a : kS30Activities)
+		{
+			if (a.id < 0 || a.id >= 4096)
+				continue;
+			for (const S21ActivityEntry& b : kS21Activities)
+			{
+				if (!strcmp(a.name, b.name))
+				{
+					s_map[a.id] = b.id;
+					break;
+				}
+			}
+		}
+		s_bBuilt = true;
+	}
+	return nS30 > 0 && nS30 < 4096 ? s_map[nS30] : nS30;
+}
+
 static void UserCmd_EmitS3(S30BitWriter_t& w, const UserCmd_t& cur, const UserCmd_t& prev, const uint8_t* pSource, int nSourceBytes)
 {
 	const float kMax = 1.0e9f, kFocusMax = 100000.0f;
@@ -366,7 +397,15 @@ static void UserCmd_EmitS3(S30BitWriter_t& w, const UserCmd_t& cur, const UserCm
 		EmitDeltaS(w, cur.weaponSelectType, 3, prev.weaponSelectType);
 	}
 	EmitDeltaU(w, cur.realtimeWeaponMod, 16, prev.realtimeWeaponMod);
-	EmitDeltaS(w, cur.weaponCustomActivity, 11, prev.weaponCustomActivity); // S30 12 bits -> S3 11
+	if (cur.weaponCustomActivity > 0 && cur.weaponCustomActivity != prev.weaponCustomActivity)
+	{
+		static volatile LONG s_nActLogged = 0;
+		if (InterlockedIncrement(&s_nActLogged) <= 20)
+			S30LogFile("[USERCMD] cmd %u weapon activity S30 %d -> S21 %d\n", cur.commandNumber,
+				cur.weaponCustomActivity, Usercmd_ActivityS30ToS21(cur.weaponCustomActivity));
+	}
+	EmitDeltaS(w, Usercmd_ActivityS30ToS21(cur.weaponCustomActivity), 11,
+		Usercmd_ActivityS30ToS21(prev.weaponCustomActivity)); // S30 12 bits -> S3 11, S21 numbering
 	EmitDeltaU(w, cur.meleetarget, 32, prev.meleetarget);
 	w.Write(cur.controllerMode ? 1 : 0, 1);
 	w.Write(cur.vehicleCameraControls ? 1 : 0, 1);
