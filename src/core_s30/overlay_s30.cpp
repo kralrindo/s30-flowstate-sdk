@@ -27,6 +27,7 @@
 #include "thirdparty/imgui/backends/imgui_impl_win32.h"
 #include "s30_log.h"
 #include "overlay_s30.h"
+#include "bridge_animtrace_s30.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -497,14 +498,20 @@ static void Overlay_OnPresent(IDXGISwapChain* pSwapChain)
 static HRESULT STDMETHODCALLTYPE h_Present(IDXGISwapChain* pSwapChain, UINT nSyncInterval, UINT nFlags)
 {
 	if (!(nFlags & DXGI_PRESENT_TEST))
+	{
 		Overlay_OnPresent(pSwapChain);
+		S30AnimTrace_OnFrame();
+	}
 	return v_Present(pSwapChain, nSyncInterval, nFlags);
 }
 
 static HRESULT STDMETHODCALLTYPE h_Present1(IDXGISwapChain1* pSwapChain, UINT nSyncInterval, UINT nFlags, const DXGI_PRESENT_PARAMETERS* pParams)
 {
 	if (!(nFlags & DXGI_PRESENT_TEST))
+	{
 		Overlay_OnPresent(pSwapChain);
+		S30AnimTrace_OnFrame();
+	}
 	return v_Present1(pSwapChain, nSyncInterval, nFlags, pParams);
 }
 

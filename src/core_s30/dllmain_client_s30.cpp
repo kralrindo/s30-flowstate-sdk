@@ -31,6 +31,7 @@
 #include "bridge_activity_s30.h"
 #include "bridge_cmdseed_s30.h"
 #include "bridge_hud_s30.h"
+#include "bridge_animtrace_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -132,6 +133,7 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30EngineLog_Install();
 	S30ScriptPrint_Install();
 	S30Commands_RegisterBuiltins();
+	S30AnimTrace_RegisterCommands();
 	S30ConCommand_Init();
 	S30NetDiag_Install();
 	S30Signon_Install();

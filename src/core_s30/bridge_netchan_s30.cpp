@@ -38,6 +38,7 @@
 #include "bridge_c2s_s30.h"
 #include "bridge_hud_s30.h"
 #include "bridge_props_s30.h"
+#include "bridge_animtrace_s30.h"
 #include "engine/client/net_bridge_skip.h" // engine-free S3 message body widths
 #include "concommand_s30.h"
 #include "console_s30.h"
@@ -572,6 +573,17 @@ static void h_DecoderDone(uint8_t* pDecoder)
 			const uint8_t* const pRoot = *reinterpret_cast<uint8_t* const*>(pDecoder);
 			S30LogFile("[NETCHAN] decoder '%s': %d unmatched prop(s) on dummies%s\n",
 				pRoot ? *reinterpret_cast<const char* const*>(pRoot + RT_NAME) : "?", nFilled, nFilled < 0 ? " (FAULT)" : "");
+		}
+	}
+	if (s_bActive)
+	{
+		__try
+		{
+			S30AnimTrace_OnDecoder(pDecoder);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			S30Log("[ANIM1P] decoder wrap faulted\n");
 		}
 	}
 	v_DecoderDone(pDecoder);
