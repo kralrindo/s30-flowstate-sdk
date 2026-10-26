@@ -241,6 +241,10 @@ static ULONGLONG s_nEchoNextMs = 0;
 // Tick of the last snapshot the engine processed: acked in every C2S packet with
 // S3 clc_ClientTick (the dedi's delta base; it holds a FULL until that tick is acked).
 static int s_nAckTick = -1;
+// When the engine last processed a snapshot: while they flow, the dedi's svc_ServerTick
+// (same tick, same ServerTickInfo) is not passed on (see case 22).
+static volatile ULONGLONG s_nLastSnapshotMs = 0;
+static const ULONGLONG kServerTickSnapshotWindowMs = 500;
 // The engine's last clc_Move, transcoded to S3 (bridge_usercmd), written into the next C2S packet.
 static uint8_t s_pendingMove[2048];
 static int s_nPendingMoveBits = 0;
@@ -1517,8 +1521,43 @@ static bool Netchan_OnSnapshot(uint8_t* pChan, S30BitReader_t& r)
 	if (n <= 20 || !bOk || n % 1000 == 0)
 		S30Log("[NETCHAN] Snapshot #%ld tick %u %s%u, %u payload bits, ok %d\n", n, nTick1,
 			bDelta ? "delta from " : "full", bDelta ? nDeltaFrom : 0, nLengthBits, bOk);
+	{
+		// Clock report (diagnostic): once a second, the ServerTickInfo the client is fed
+		// and the server tick rate against wall time.
+		static ULONGLONG s_nStartMs = 0, s_nLastMs = 0;
+		static uint32_t s_nStartTick = 0, s_nPrevTick = 0;
+		static int s_nCount = 0;
+		static ULONGLONG s_nMaxGapMs = 0;
+		static int s_nMaxTickStep = 0;
+		const ULONGLONG nNow = GetTickCount64();
+		if (s_nLastMs && nNow - s_nLastMs > s_nMaxGapMs)
+			s_nMaxGapMs = nNow - s_nLastMs;
+		if (s_nPrevTick && static_cast<int>(nTick1 - s_nPrevTick) > s_nMaxTickStep)
+			s_nMaxTickStep = static_cast<int>(nTick1 - s_nPrevTick);
+		s_nLastMs = nNow;
+		s_nPrevTick = nTick1;
+		++s_nCount;
+		if (!s_nStartMs)
+		{
+			s_nStartMs = nNow;
+			s_nStartTick = nTick1;
+		}
+		else if (nNow - s_nStartMs >= 1000)
+		{
+			const double flWall = (nNow - s_nStartMs) / 1000.0;
+			S30LogFile("[CLOCK] snapshots %d in %.3fs: ticks +%d (%.0f%% of wall at %.3f) max step %d, max gap %llu ms | tick2 %u compute %u stddev %u struggling %u cpu %u cmdTick %u\n",
+				s_nCount, flWall, static_cast<int>(nTick1 - s_nStartTick), 100.0 * (nTick1 - s_nStartTick) * s_flTickInterval / flWall,
+				s_flTickInterval, s_nMaxTickStep, s_nMaxGapMs, nTick2, nCompute, nStdDev, bConn, nByte, nCmdRun);
+			s_nStartMs = nNow;
+			s_nStartTick = nTick1;
+			s_nCount = 0;
+			s_nMaxGapMs = 0;
+			s_nMaxTickStep = 0;
+		}
+	}
 	if (bOk)
 	{
+		s_nLastSnapshotMs = GetTickCount64();
 		AcquireSRWLockExclusive(&s_lock);
 		s_nAckTick = static_cast<int>(nTick1);
 		ReleaseSRWLockExclusive(&s_lock);
@@ -1720,6 +1759,20 @@ static void Netchan_Dispatch(uint8_t* pChan, const uint8_t* pData, int nBytes, i
 		case 22: // svc_ServerTick: dedi 1-bit field -> 16 bits (S21 format bridge)
 		{
 			const uint32_t t1 = r.Read(32), t2 = r.Read(32), c = r.Read(16), d = r.Read(16), b = r.Read(1), y = r.Read(8), l = r.Read(32);
+			// The dedi sends one with every snapshot, and the snapshot carries the same
+			// ServerTickInfo. S30 feeds both to its clock drift manager (0x248290, from
+			// the ServerTick handler and from snapshot processing); the second call for
+			// a tick has zero server time elapsed, puts inf/nan in the rate ring, and the
+			// trimmed mean pins the client clock rate at its 0.1 floor until the 0.2 s
+			// behind-snap -- the whole game slows and catches up about once a second.
+			// While snapshots flow they are the only tick source the client gets.
+			if (GetTickCount64() - s_nLastSnapshotMs < kServerTickSnapshotWindowMs)
+			{
+				static volatile LONG s_nTicksConsumed = 0;
+				if (InterlockedIncrement(&s_nTicksConsumed) == 1)
+					S30Log("[NETCHAN] svc_ServerTick %u consumed: snapshots carry the tick (one clock drift sample per tick)\n", t1);
+				break;
+			}
 			static uint8_t s_buf[32];
 			S30BitWriter_t w(s_buf, sizeof(s_buf));
 			w.Write(t1, 32); w.Write(t2, 32); w.Write(c, 16); w.Write(d, 16); w.Write(b, 16); w.Write(y, 8); w.Write(l, 32);

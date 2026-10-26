@@ -154,6 +154,20 @@
   schedules.
 - Verified in game: commands (say, noclip, give, infinite_ammo), script calls both ways, firing.
 
+### 2026-10-26: walking slowed the whole game about once a second (fixed)
+- Cause: the dedi sends svc_ServerTick with every snapshot, and the snapshot carries the same ServerTickInfo. S30's
+  clock drift manager (SetServerTick 0x248290, at client state +0xDC) is fed from both, so every second sample of a
+  tick had zero server time elapsed. Its 24-sample rate ring filled with inf/nan, the trimmed mean pinned the client
+  clock rate at its 0.1 floor, and the client clock ran at 10 % until it was 0.2 s behind and snapped forward.
+  Proven from live memory (ring half inf/nan, rate 0.1 / 1.0) and the per-second `[CLOCK]` log (+0.22 s jumps,
+  usercmd time 57-80 % of wall).
+- Fix (client_s30 netchan): while snapshots flow, svc_ServerTick is consumed; snapshots are the only tick source.
+  After: ring all ~1.0, rate 1.0, largest clock step 0.3 ms, usercmd time 100 % of wall, 175 commands/s walking.
+- Ruled out on the way: frame rate (the 19 FPS reading was a background window), packet loss, the dedi's command-tick
+  stamp (`bridge_real_cmdtick 0` changed nothing).
+- `[CLOCK]` lines (client log, once a second): usercmd time and client clock against wall time, snapshot tick rate
+  and the ServerTickInfo fields.
+
 ## Next action
 Prop adapters for the S30 type changes (weapon mod bitfields, consumable counts, class mods, overheat), S30
 playlists from the client rpaks for the lobby menus, then a 10-minute session.

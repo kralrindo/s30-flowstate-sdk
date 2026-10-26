@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include "thirdparty/detours/include/detours.h"
 #include "bridge_usercmd_s30.h"
 #include "bridge_c2s_s30.h"
@@ -471,6 +472,82 @@ static void Usercmd_Finish(UserCmd_t& cur)
 	}
 }
 
+//-----------------------------------------------------------------------------
+// Clock report (diagnostic): once a second, the new commands' frametime total and
+// the client's own clock (base snapshot tick + interpolation fraction) against wall
+// time. A client running its clock below real time shows as clock/wall < 1.
+//-----------------------------------------------------------------------------
+struct UsercmdClock_t
+{
+	double flWallStart;
+	double flClockStart, flClockLast;
+	uint32_t nLastCmd;
+	int nCmds;
+	double flFtSum;
+	float flFtMin, flFtMax;
+	double flWorstStep;  // largest |clock step - frametime| between consecutive new commands
+	double flLastNewWall;
+	double flMaxGap;     // largest wall gap between two batches carrying new commands
+};
+static UsercmdClock_t s_clock = {};
+
+static void Usercmd_ClockNote(const UserCmd_t& cmd)
+{
+	if (cmd.commandNumber <= s_clock.nLastCmd)
+		return; // backup copy of a command already counted
+	const float flInterval = S30Netchan_TickInterval();
+	const double flClock = flInterval > 0.0f && cmd.baseSnapshotTickCount
+		? (static_cast<double>(cmd.baseSnapshotTickCount) + cmd.snapshotInterpAcc) * flInterval : 0.0;
+	const bool bConsecutive = s_clock.nLastCmd && cmd.commandNumber == s_clock.nLastCmd + 1;
+	if (bConsecutive && s_clock.flClockLast > 0.0 && flClock > 0.0)
+	{
+		const double flStep = flClock - s_clock.flClockLast - cmd.frametime;
+		if (fabs(flStep) > fabs(s_clock.flWorstStep))
+			s_clock.flWorstStep = flStep;
+	}
+	s_clock.nLastCmd = cmd.commandNumber;
+	s_clock.flClockLast = flClock;
+	if (!s_clock.nCmds)
+	{
+		s_clock.flClockStart = flClock;
+		s_clock.flFtMin = s_clock.flFtMax = cmd.frametime;
+	}
+	++s_clock.nCmds;
+	s_clock.flFtSum += cmd.frametime;
+	s_clock.flFtMin = cmd.frametime < s_clock.flFtMin ? cmd.frametime : s_clock.flFtMin;
+	s_clock.flFtMax = cmd.frametime > s_clock.flFtMax ? cmd.frametime : s_clock.flFtMax;
+}
+
+static void Usercmd_ClockReport(bool bNewCmds)
+{
+	const double flNow = Usercmd_Now();
+	if (bNewCmds)
+	{
+		if (s_clock.flLastNewWall > 0.0 && flNow - s_clock.flLastNewWall > s_clock.flMaxGap)
+			s_clock.flMaxGap = flNow - s_clock.flLastNewWall;
+		s_clock.flLastNewWall = flNow;
+	}
+	if (s_clock.flWallStart <= 0.0)
+	{
+		s_clock.flWallStart = flNow;
+		return;
+	}
+	const double flWall = flNow - s_clock.flWallStart;
+	if (flWall < 1.0)
+		return;
+	const double flClock = s_clock.flClockLast - s_clock.flClockStart;
+	S30LogFile("[CLOCK] wall %.3f: %d cmds (%.1f/s) ft sum %.3f (%.0f%%) min %.4f max %.4f | client clock +%.3f (%.0f%%) worst step %+.4f | max batch gap %.0f ms\n",
+		flWall, s_clock.nCmds, s_clock.nCmds / flWall, s_clock.flFtSum, 100.0 * s_clock.flFtSum / flWall,
+		s_clock.flFtMin, s_clock.flFtMax, flClock, 100.0 * flClock / flWall, s_clock.flWorstStep, 1000.0 * s_clock.flMaxGap);
+	const uint32_t nLastCmd = s_clock.nLastCmd;
+	const double flClockLast = s_clock.flClockLast, flLastNewWall = s_clock.flLastNewWall;
+	s_clock = {};
+	s_clock.nLastCmd = nLastCmd;
+	s_clock.flClockLast = flClockLast;
+	s_clock.flLastNewWall = flLastNewWall;
+	s_clock.flWallStart = flNow;
+}
+
 static void Usercmd_OnMove(const uint8_t* pMsg)
 {
 	const int nBackup = *reinterpret_cast<const int*>(pMsg + MOVE_BACKUP);
@@ -494,10 +571,12 @@ static void Usercmd_OnMove(const uint8_t* pMsg)
 	UserCmd_Reset(cur);
 	s_nPrevImpulseWire = 0;
 	int nDone = 0;
+	const uint32_t nClockLastCmd = s_clock.nLastCmd;
 	for (int i = 0; i < nCmds; ++i)
 	{
 		if (!UserCmd_ParseS30(r, cur, prev))
 			break;
+		Usercmd_ClockNote(cur); // before Usercmd_Finish: the engine's own frametime
 		Usercmd_Finish(cur);
 		UserCmd_EmitS3(body, cur, prev, pData, nSourceBytes);
 		if (body.m_bOverflow)
@@ -524,6 +603,7 @@ static void Usercmd_OnMove(const uint8_t* pMsg)
 		if (InterlockedIncrement(&s_nTail) <= 10)
 			S30Log("[USERCMD] clc_Move: %d commands read %d of %d bits -- format drift\n", nCmds, r.m_nPos, nBits);
 	}
+	Usercmd_ClockReport(s_clock.nLastCmd != nClockLastCmd);
 	const int nBackupSent = nDone < nBackup ? nDone : nBackup;
 	static uint8_t s_msg[2100];
 	S30BitWriter_t w(s_msg, sizeof(s_msg));
