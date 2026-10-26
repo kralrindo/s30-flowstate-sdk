@@ -36,6 +36,11 @@ void S30Signon_OnConnAccept(const char* pszMap);
 bool S30Signon_FilterSendTo(uintptr_t s, const char* pBuf, int nLen, const sockaddr* pTo, int nToLen);
 int S30Signon_InjectRecv(uintptr_t s, char* pBuf, int nLen, sockaddr* pFrom, int* pnFromLen);
 
+// Queues a datagram from the dedi for the engine socket (bridge poll thread).
+bool S30Signon_QueueForEngine(const uint8_t* pData, int nLen);
+// True if an engine netadr (type +0, address +4, port +20) is the dedi.
+bool S30Signon_IsDestNetadr(const uint8_t* pNetadr);
+
 // sdk_clstate: signon state, server address and netchannel of client state 0.
 void S30Signon_PrintClientState(void);
 

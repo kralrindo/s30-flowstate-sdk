@@ -116,8 +116,18 @@
   loading screen, from one `bridge_connect`. New `sdk_clstate`.
 - Found: the workspace dedi crashes after `ready` with `+launchplaylist survival_firingrange`, not with `+map`.
 
+### 2026-10-26: stage 2, steps 2-3: the S3 netchannel in the S30 engine (docs/12)
+- `bridge_netchan_s30`: `CNetChan::ProcessPacket` (0x29FF80) and `CClientState::SetSignonState` (0x2FF0C0) detoured
+  for the dedi's packets: S3 header, nonce, subchannel (LZSS), the DataBlock, and dispatch into S30's messages with
+  the docs/11 map and the S21 format bridges. C2S: the S21 bridge's packet (nonce ack, signon rungs, UserInfo).
+- CreateStringTable rewritten as S21 does (LZSS -> Oodle via S30's `OodleLZ_Compress` 0xFE4E60, 22 -> 24 bits);
+  SendTables without an S30 RecvTable go without a decoder; ClassInfo's 21 server classes S30 lacks get stub
+  ClientClasses (S30 makes a missing class fatal).
+- `engine_log_s30` now logs Host_Error, Host_EndGame and the datatable warning (retail prints none of them).
+- Result: CONNECTED -> NEW -> PRESPAWN on the dedi; pdef, playlists, ServerInfo, all string tables, SendTables and
+  ClassInfo processed; CreateDecoders fails on 609 SendProps S30 does not have or types differently.
+
 ## Next action
-Stage 2, step 2: route the dedi's netchannel packets to the engine socket and replace `CNetChan::ProcessPacket` with
-S3 header parsing plus dispatch into S30's message array (docs/11 type map; Print: extra bit). C2S: the engine's
-netchannel output translated to S3 (ClientTick: three values). Still to compare: the usercmd delta encoding inside
-clc_Move.
+Stage 2, step 4: tolerant decoders, as the S21 bridge's (dummy RecvProp for unmatched props, WriteBlock skips it,
+unmatched arrays consumed per element); first map S30's decode/WriteBlock path. Then PlaylistOverrides,
+UpdateStringTable, the snapshot.

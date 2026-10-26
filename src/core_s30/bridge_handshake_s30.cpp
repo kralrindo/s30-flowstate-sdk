@@ -13,8 +13,8 @@
 // The C2S_CONNECT field layout is the S3 dedi's and is copied as-is from the
 // S21 bridge, which is proven against this dedi.
 //
-// Stage 1 stops at CONNACCEPT: the dedi has the client as connected. Feeding
-// the dedi's netchannel into the S30 engine is the next stage.
+// After CONNACCEPT the dedi's netchannel goes to the S30 engine (bridge_signon,
+// bridge_netchan).
 //
 //=============================================================================//
 #include <winsock2.h>
@@ -26,6 +26,8 @@
 #include "s30_log.h"
 #include "bridge_handshake_s30.h"
 #include "bridge_signon_s30.h"
+#include "bridge_datablock_s30.h"
+#include "bridge_netchan_s30.h"
 #include "console_s30.h"
 #include "concommand_s30.h"
 
@@ -50,6 +52,7 @@ static ULONGLONG s_nStageDeadline = 0;
 static char s_szAcceptedMap[64] = {};
 static char s_szAcceptedMode[64] = {};
 static volatile LONG s_nNetchanPackets = 0;
+static volatile LONG s_nBadFragments = 0;
 
 static const uint64_t s_nPlatformUserId = 9990000; // the offline Nucleus id (identity_s30)
 static const char s_szPersona[] = "s30player";
@@ -220,6 +223,7 @@ static void Bridge_OnConnAccept(const uint8_t* pBody, int nBody)
 	InterlockedExchange(&s_eStage, static_cast<LONG>(BridgeStage_t::ACCEPTED));
 	S30Log("[BRIDGE] CONNACCEPT: map '%s' mode '%s' -- the dedi has the client as connected\n", s_szAcceptedMap, s_szAcceptedMode);
 	S30Signon_OnConnAccept(s_szAcceptedMap);
+	S30Netchan_OnConnAccept();
 }
 
 static DWORD WINAPI Bridge_PollThread(LPVOID)
@@ -227,6 +231,7 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 	static uint8_t s_buf[65536];
 	while (!s_bStopPoll)
 	{
+		S30Netchan_Pump();
 		sockaddr_in6 from = {};
 		int nFromLen = sizeof(from);
 		const int nRecv = recvfrom(s_hSocket, reinterpret_cast<char*>(s_buf), sizeof(s_buf), 0, reinterpret_cast<sockaddr*>(&from), &nFromLen);
@@ -253,6 +258,19 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 		{
 			Bridge_OnConnAccept(s_buf + 5, nRecv - 5);
 		}
+		else if (bOob && s_buf[4] == 0x4F && s_eStage == static_cast<LONG>(BridgeStage_t::ACCEPTED))
+		{
+			if (!S30DataBlock_OnFragment(s_buf, nRecv))
+			{
+				const LONG n = InterlockedIncrement(&s_nBadFragments);
+				if (n <= 5)
+					S30Log("[BRIDGE] malformed DataBlock fragment (%d bytes, #%ld)\n", nRecv, n);
+			}
+		}
+		else if (bOob && s_buf[4] == 0x4A)
+		{
+			// CONNACCEPT repeats until the dedi sees the client's signon traffic.
+		}
 		else if (bOob)
 		{
 			char szText[96] = {};
@@ -260,12 +278,27 @@ static DWORD WINAPI Bridge_PollThread(LPVOID)
 				szText[i - 5] = (s_buf[i] >= 0x20 && s_buf[i] < 0x7F) ? static_cast<char>(s_buf[i]) : '.';
 			S30Log("[BRIDGE] OOB 0x%02X len=%d in stage '%s': %s\n", s_buf[4], nRecv, S30Bridge_StateName(), szText);
 		}
+		else if (s_eStage == static_cast<LONG>(BridgeStage_t::ACCEPTED))
+		{
+			// Netchannel traffic from the dedi: to the engine socket, where the
+			// ProcessPacket detour (bridge_netchan) parses it.
+			const LONG nCount = InterlockedIncrement(&s_nNetchanPackets);
+			if (!S30Signon_QueueForEngine(s_buf, nRecv) && nCount <= 20)
+				S30Log("[BRIDGE] netchan packet #%ld (%d bytes) not queued for the engine\n", nCount, nRecv);
+		}
 		else
 		{
-			// Netchannel traffic from the dedi; the next stage hands it to the engine.
+			// Netchannel traffic before CONNACCEPT: not routed.
+			// S3 header: [32 seq][32 ack][8 flags] (S21 bridge S21Bridge_Hook_ProcessPacket).
 			const LONG nCount = InterlockedIncrement(&s_nNetchanPackets);
-			if (nCount <= 5 || nCount % 500 == 0)
-				S30LogFile("[BRIDGE] netchan packet #%ld len=%d (not yet consumed)\n", nCount, nRecv);
+			if ((nCount <= 20 || nCount % 500 == 0) && nRecv >= 9)
+			{
+				int32_t nSeq, nAck;
+				memcpy(&nSeq, s_buf, 4);
+				memcpy(&nAck, s_buf + 4, 4);
+				S30LogFile("[BRIDGE] netchan packet #%ld len=%d seq=%d ack=%d flags=0x%02X (not yet consumed)\n",
+					nCount, nRecv, nSeq, nAck, s_buf[8]);
+			}
 		}
 	}
 	return 0;
@@ -328,6 +361,8 @@ bool S30Bridge_Connect(const char* pszHostPort)
 	// connectionless wrapper (0x3F2FB0) otherwise drops a reply that did not come
 	// through DTLS; it is read nowhere else. Both are restored on disconnect.
 	S30Signon_Begin(s_dest, s_hSocket);
+	S30DataBlock_Reset(Bridge_Send);
+	S30Netchan_Begin(Bridge_Send);
 	static const char* const s_pszBridgeVars[] = { "net_usesocketsforloopback", "cl_strict_transport_checks" };
 	for (const char* pszVar : s_pszBridgeVars)
 	{
@@ -352,11 +387,12 @@ bool S30Bridge_Connect(const char* pszHostPort)
 	return nSent == static_cast<int>(sizeof(challenge));
 }
 
-// Local reset only: the dedi times the client out on its own. A proper
-// net_Disconnect goes with the netchannel stage.
+// Local reset only: the dedi times the client out on its own (no C2S
+// net_Disconnect yet).
 void S30Bridge_Disconnect(void)
 {
 	InterlockedExchange(&s_eStage, static_cast<LONG>(BridgeStage_t::IDLE));
+	S30Netchan_End();
 	S30Signon_End();
 	S30Console_SendToEngine("disconnect; cl_strict_transport_checks 1; net_usesocketsforloopback 0");
 	S30Log("[BRIDGE] reset to idle\n");

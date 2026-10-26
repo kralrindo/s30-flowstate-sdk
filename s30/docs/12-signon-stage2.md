@@ -70,7 +70,89 @@ sends to the dedi (1,228- and 256-byte datagrams, about 120 a second), dropped f
   survival_firingrange`; started like the user's `launch_server.bat` with `+map mp_rr_canyonlands_staging_mu1` it
   stays up. Not yet investigated.
 
+## Step 2: the netchannel (`src/core_s30/bridge_netchan_s30.cpp`)
+
+S30 facts used (S30 IDB):
+
+| | S30.1 |
+|---|---|
+| `CNetChan::ProcessPacket(chan, packet)` | `0x29FF80`: `Seek(packet+56, 0)`, header `0x29EB10` (in seq → `chan+8`, out seq ack → `chan+12`), last received `chan+8432` = net time (`0x2801CD8`, loaded at `+0x96`), handler `chan+8568` slot 5 `PacketStart(handler, chan+8, chan+12)`, subchannel, `ProcessMessages`, slot 6 `PacketEnd` |
+| netpacket | `+0` sender, `+48` data, `+56` bf_read, `+120` size; `NET_GetPacket` `0x2A5CB0` fills the bf_read (`+0x10` bits, `+0x18` bytes, `+0x28` in, `+0x30` end, `+0x38` data) then `Seek(0)` (`0x5E2C90`) |
+| message array | pointer at `chan+0x2180`, count `+0x2198`; `RegisterMessage` stores `array[GetType()]` |
+| `CClientState::SetSignonState(cl, state, spawn, msg)` | `0x2FF0C0` (called by the handler's ProcessSignonState `0x3F3F70`); states 0..10 named as S21 (9 MAYRECONNECT, 10 CHANGELEVEL) |
+| svc_Print reader | `0x4741C0`: a leading bit stored at `msg+48`; ProcessPrint `0x3F4590` prints only when it is set |
+| PersistenceDefFile reader | `0x47EEF0`: 64-bit version, 16-bit length, data (the dedi's format) |
+| `Host_Error` | `0x4165E0`: formats into a stack buffer, `Host_Disconnect` (`0x271EE0`), then `longjmp`; now logged by `engine_log_s30` |
+| ConVar flags | `sv_cheats` `0x82000`, `host_timescale` `0x6000`: REPLICATED `1<<13` and CHEAT `1<<14` as tier1 |
+
+The detours take only packets whose sender is the dedi; everything else runs natively. S2C: S3 header, nonce, the
+subchannel (reassembly, LZSS), then each S3 message through the docs/11 map: pass-through for StringCmd, Playlists,
+PersistenceDefFile and the persistence messages; the S21 format bridges for SignonState (NEW deferred until
+SendTables, C2S NEW sent at once), ServerInfo, ServerTick, SetConVar (replicated, non-cheat, S21's name filter) and
+Print (leading bit 1); MTXUserMsg, SetPause, PlaylistChange and DLCNotifyOwnership (S21's auto rule: only when the
+rest is `64 + N x 16` bits) consumed. The DataBlock is dispatched on the engine thread at the next packet. C2S is
+the S21 bridge's packet: nonce ack, SignonState rungs (CONNECTED on CONNACCEPT, then each engine `SetSignonState`
+2..8, echoed every 250 ms), UserInfo 3 times; flushed when the engine sends to the dedi (at most every 10 ms) and
+every 250 ms from the bridge thread. `sdk_netchan` shows the counters.
+
+Not done yet: the dedi's ack is not translated into `chan+12` (the engine sees out-ack 0), flow statistics are not
+fed, UserInfo sends the S21 fallback values (not live ConVars), PlaylistChange/Overrides are not applied.
+
+### Result (`20261026_092738.log`, workspace dedi restarted with `+map`)
+
+```
+[NETCHAN] server nonce 0x00011B91
+[NETCHAN] DLCNotifyOwnership consumed (N = 194 balances)
+[NETCHAN] S3 23 (PersistenceDefFile) -> S30 26: read 1 process 1, 126608 bits
+[NETCHAN] S3 11 (Playlists) -> S30 15: read 1 process 1, 2469569 bits
+[NETCHAN] S3 7 (ServerInfo) -> S30 12: read 1 process 1
+[NETCHAN] S3 22 (ServerTick) -> S30 25: read 1 process 1
+[NETCHAN] S3 4 (SetConVar) -> S30 5: read 1 process 1
+[NETCHAN] S2C SignonState(3) deferred until SendTables; C2S NEW queued
+[NETCHAN] DataBlock 0: not dispatched yet: 34(47) 12(883680) 12(102338) ... (17 CreateStringTable)
+[NETCHAN] DataBlock 0: S3 8 at bit 0 not bridged yet          <- second transfer: SendTables + ClassInfo
+[NETCHAN] S2C SignonState 4 -> 4 spawn 1 ...
+[NETCHAN] replaying deferred SignonState(3) before 4
+[ENGINE] Host_Error: CL_RegisterResources:  host_state.worldmodel/GetBaseLocalClient().GetModel( 1 )==NULL
+```
+
+The dedi acks the bridge's C2S and walks CONNECTED → NEW → PRESPAWN on it. The engine disconnects in NEW because the
+model precache table never arrived: CreateStringTable is not bridged yet.
+
+## Step 3: string tables, SendTables, ClassInfo
+
+| | S30.1 |
+|---|---|
+| svc_CreateStringTable reader `0x488220` | S21's widths (16, log2, 24, 12, 4, 2; `netmsg_bodies.py`) |
+| ProcessCreateStringTable `0x3F5D30` | compressed: `[uncomp:32][blob:32]`, blob `0xFFFFFFFD` + size + Oodle (`OodleLZ_Decompress` `0xFE5800`); uncompressed: parsed directly; Process true only if it consumed exactly the length |
+| `OodleLZ_Compress` | `0xFE4E60` (linked; `oo2::OodleLZ_Compress`), Kraken 8 / SuperFast 1 as the S21 bridge |
+| ProcessSendTable `0x3F57D0` | parse `0x256880`, then `RecvTable_RecvClassInfos` `0x251450`: with the needs-decoder bit, "No matching RecvTable for SendTable" fails it; skipped once handler+1096 is set (after CreateDecoders) |
+| client RecvTable list | 16-byte nodes at `0x1B59968` (head `0x1B59980`), RecvTable name `+0x4C8`, compare ignoring case (`0x1416920`) |
+| `CL_ParseClassInfo_EndClasses` `0x2FDB60` | server classes `+0x460`/`+0x468`; client list = client interface `0x28019C8` `+0x60` = `g_pClientClassHead` `0x2801718` (ClientClass: name `+0x10`, RecvTable `+0x18`, next `+0x20`, id `+0x28`); a missing class is a fatal `Error` (S21: a warning) |
+| ProcessClassInfo `0x3F5840` | EndClasses, then CreateDecoders `0x257E30` ("CreateDecoders failed" → Host_EndGame) |
+| CompareRecvPropToSendProp builder `0x256440` | every SendProp needs a RecvProp of the same name, type, inside-array flag and element count, else the decoder fails; RecvProp offsets as S21's (type `+0`, child table `+0x20`, name `+0x28`, array element `+0x38`, count `+0x5C`) |
+| engine messages retail drops | `Host_Error` `0x4165E0`, `Host_EndGame` `0x4164D0`, the datatable warning `0x251220`: all logged by `engine_log_s30` now |
+
+Done in the bridge:
+- **CreateStringTable**: the S21 rewrite (LZSS → Oodle, 22 → 24 bits). All 17 tables of the first transfer process.
+- **SendTable**: passed through; the 21 whose name has no S30 RecvTable go without a decoder (the needs-decoder bit
+  cleared, S21's fallback): `DT_Beam`, `DT_BoneFollower`, `DT_PhysBox`, `DT_PlayerResource`, `DT_SpotlightEnd`,
+  `DT_Sprite`, `DT_SpriteOriented`, `DT_BaseBeam`, the nine `DT_TEBeam*`, `DT_TriggerNoGrapple`,
+  `DT_TriggerNoZipline`, `DT_TriggerSlip`, `DT_DoorMover`, `DT_Prop_Portal`.
+- **ClassInfo**: passed through; EndClasses is wrapped so the 21 server classes S30 lacks (`CBeam` ... `CProp_Portal`,
+  `DoorMover`) find a stub ClientClass (name + stub RecvTable named after the server's datatable) at the front of the
+  client list for the engine's own matching; the list is restored afterwards (also on a longjmp). EndClasses passes.
+
+### Result (`20261026_095754.log`)
+
+CreateDecoders fails: 609 SendProps of the dedi do not match S30's RecvProps (logged as `[PROPS]` by a read-only
+wrapper of `0x256440`): 528 with no RecvProp of that name (`m_shieldHealth`, `m_squadID`, `m_teamMemberIndex`,
+`m_parentAttachmentType`, `m_smartAmmo*`, ...), 69 with another type (`m_modBitfield` int → datatable,
+`m_classModsActive` int64 → array, ...), 12 with another array size (`m_bools` 32 vs 36, `m_int32s` 6 vs 8,
+`m_entities` 22 vs 24). `DT_Player` alone has 81.
+
 ## Next
-The netchannel: the dedi's S3 packets (now counted on the bridge socket) go to the engine socket through the same
-`recvfrom` route, and `CNetChan::ProcessPacket` is replaced by S3 header parsing plus dispatch into S30's message
-array with the docs/11 type map. The engine's own netchannel output is translated to S3 on the C2S side.
+The decoders have to tolerate unmatched props, as the S21 bridge's do: there the decoder builder skips them, the
+decoder gets a dummy RecvProp (`?_unmatched`, no-op proxy) instead of NULL, the WriteBlock paths skip writes for it,
+and unmatched arrays are consumed element by element with the wire decoders. S30's decode/WriteBlock path has to be
+mapped before porting that. Then PlaylistOverrides, UpdateStringTable, the snapshot.

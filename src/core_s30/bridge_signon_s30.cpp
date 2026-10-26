@@ -22,6 +22,7 @@
 #include <ws2ipdef.h>
 #include <windows.h>
 #include "bridge_signon_s30.h"
+#include "bridge_netchan_s30.h"
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -67,10 +68,49 @@ static uintptr_t s_hBridgeSocket = INVALID_SOCKET;
 static volatile LONG s_nDroppedSends = 0;
 static volatile LONG s_nPlaintextPackets = 0;
 
-// One queued engine-bound datagram is all stage 2 needs so far.
+// Engine-bound datagrams (the type-12 reply, then the dedi's netchannel packets).
+// NET_ReceiveDatagram (0x2A5A90) receives into 1264 bytes; longer ones are dropped.
+static const int kEngineRecvMax = 1264;
+static const int kQueueSlots = 128;
+struct QueuedDatagram_t
+{
+	int nLen;
+	uint8_t data[kEngineRecvMax];
+};
 static SRWLOCK s_queueLock = SRWLOCK_INIT;
-static uint8_t s_queued[1200];
-static int s_nQueued = 0;
+static QueuedDatagram_t s_queue[kQueueSlots];
+static int s_nQueueHead = 0;
+static volatile LONG s_nQueued = 0;
+static volatile LONG s_nQueueDrops = 0;
+
+static bool Signon_Enqueue(const uint8_t* pData, int nLen)
+{
+	if (nLen <= 0 || nLen > kEngineRecvMax)
+	{
+		const LONG n = InterlockedIncrement(&s_nQueueDrops);
+		if (n <= 5)
+			S30Log("[SIGNON] datagram of %d bytes does not fit the engine's receive buffer -- dropped (#%ld)\n", nLen, n);
+		return false;
+	}
+	bool bOk = false;
+	AcquireSRWLockExclusive(&s_queueLock);
+	if (s_nQueued < kQueueSlots)
+	{
+		QueuedDatagram_t& slot = s_queue[(s_nQueueHead + s_nQueued) % kQueueSlots];
+		memcpy(slot.data, pData, nLen);
+		slot.nLen = nLen;
+		++s_nQueued;
+		bOk = true;
+	}
+	ReleaseSRWLockExclusive(&s_queueLock);
+	if (!bOk)
+	{
+		const LONG n = InterlockedIncrement(&s_nQueueDrops);
+		if (n <= 5 || n % 100 == 0)
+			S30Log("[SIGNON] engine queue full -- datagram dropped (#%ld)\n", n);
+	}
+	return bOk;
+}
 
 static bool Signon_SameAddr(const sockaddr* pAddr, int nLen)
 {
@@ -126,6 +166,7 @@ bool S30Signon_FilterSendTo(uintptr_t s, const char* pBuf, int nLen, const socka
 			snprintf(szHex + i * 3, 4, "%02X ", static_cast<unsigned char>(pBuf[i]));
 		S30Log("[SIGNON] engine datagram to the dedi dropped (%d bytes, #%ld): %s\n", nLen, n, szHex);
 	}
+	S30Netchan_OnEngineSend(); // the bridge's own C2S goes in its place
 	return true;
 }
 
@@ -135,11 +176,16 @@ int S30Signon_InjectRecv(uintptr_t s, char* pBuf, int nLen, sockaddr* pFrom, int
 		return 0;
 	AcquireSRWLockExclusive(&s_queueLock);
 	int nCopied = 0;
-	if (s_nQueued && s_nQueued <= nLen)
+	if (s_nQueued)
 	{
-		memcpy(pBuf, s_queued, s_nQueued);
-		nCopied = s_nQueued;
-		s_nQueued = 0;
+		const QueuedDatagram_t& slot = s_queue[s_nQueueHead];
+		if (slot.nLen <= nLen)
+		{
+			memcpy(pBuf, slot.data, slot.nLen);
+			nCopied = slot.nLen;
+		}
+		s_nQueueHead = (s_nQueueHead + 1) % kQueueSlots;
+		--s_nQueued;
 	}
 	ReleaseSRWLockExclusive(&s_queueLock);
 	if (!nCopied)
@@ -149,7 +195,10 @@ int S30Signon_InjectRecv(uintptr_t s, char* pBuf, int nLen, sockaddr* pFrom, int
 		memcpy(pFrom, &s_dest, sizeof(sockaddr_in6));
 		*pnFromLen = sizeof(sockaddr_in6);
 	}
-	S30Log("[SIGNON] delivered a %d-byte datagram to the engine socket\n", nCopied);
+	static volatile LONG s_nDelivered = 0;
+	const LONG n = InterlockedIncrement(&s_nDelivered);
+	if (n <= 3 || n % 1000 == 0)
+		S30Log("[SIGNON] delivered a %d-byte datagram to the engine socket (#%ld)\n", nCopied, n);
 	return nCopied;
 }
 
@@ -159,6 +208,7 @@ void S30Signon_Begin(const sockaddr_in6& dest, uintptr_t hBridgeSocket)
 	s_hBridgeSocket = hBridgeSocket;
 	s_hEngineSocket = INVALID_SOCKET;
 	s_nQueued = 0;
+	s_nQueueHead = 0;
 	InterlockedExchange(&s_nDroppedSends, 0);
 	InterlockedExchange(&s_nPlaintextPackets, 0);
 	InterlockedExchange(&s_bActive, 1);
@@ -176,15 +226,24 @@ void S30Signon_OnConnAccept(const char* pszMap)
 	// ffffffff 0C <map>\0 <string>\0 <string>\0 <bit> -- the two other strings
 	// empty and the bit clear, as the S21 bridge sends its type 4.
 	const size_t nMap = strnlen(pszMap, 63);
-	AcquireSRWLockExclusive(&s_queueLock);
-	memset(s_queued, 0, sizeof(s_queued));
-	s_queued[0] = s_queued[1] = s_queued[2] = s_queued[3] = 0xFF;
-	s_queued[4] = 0x0C;
-	memcpy(s_queued + 5, pszMap, nMap);
-	s_nQueued = static_cast<int>(5 + nMap + 1 + 1 + 1 + 1);
-	ReleaseSRWLockExclusive(&s_queueLock);
+	uint8_t reply[5 + 64 + 3];
+	memset(reply, 0, sizeof(reply));
+	reply[0] = reply[1] = reply[2] = reply[3] = 0xFF;
+	reply[4] = 0x0C;
+	memcpy(reply + 5, pszMap, nMap);
+	Signon_Enqueue(reply, static_cast<int>(5 + nMap + 1 + 1 + 1 + 1));
 	S30Log("[SIGNON] queued native server-map reply (type 12, map '%.*s') for the engine socket %s\n",
 		static_cast<int>(nMap), pszMap, s_hEngineSocket != INVALID_SOCKET ? "(known)" : "(not seen yet)");
+}
+
+bool S30Signon_QueueForEngine(const uint8_t* pData, int nLen)
+{
+	return s_bActive && Signon_Enqueue(pData, nLen);
+}
+
+bool S30Signon_IsDestNetadr(const uint8_t* pNetadr)
+{
+	return s_bActive && pNetadr && Signon_PacketFromDest(pNetadr);
 }
 
 void S30Signon_PrintClientState(void)

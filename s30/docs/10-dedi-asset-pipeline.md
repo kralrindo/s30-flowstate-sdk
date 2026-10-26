@@ -145,6 +145,39 @@ S30 BSP, with 0 unresolved pak dependencies. Open:
 - The old-name rows/files (`mp_ability_space_elevator_tac.txt`, its `arenas_items.csv` row next to the
   S30-name row) are still there.
 
+## Persistence definition (pdef): the dedi's S21 pdef plus S30's new items (2026-10-26)
+
+S30 ships `cfg/server/persistent_player_data.pdef` and `pdef_autogen.pdef` as `wrap` assets in `common_early`
+(`0x5D15229E159C750D`, `0xEF8672EBF7272B65`; exported in `assets_converted/s30_common_early_wrap`). The dedi loads
+its own copies from `cfg/server` (base `#include`s the autogen file). Per the user the dedi keeps its own pdef (its
+scripts are S21's) with S30's new legends, weapons and challenge data added:
+
+- `tools/pdef_augment.py` adds to the dedi's `pdef_autogen.pdef` S30's enum members the dedi lacks (eWeaponFlavor
+  +3: frag, EMP and thermite grenades; eBattlePass, eRankedPeriod2Pt0Flavor, eWeaponStatCategory), S30's new enums
+  (eAutogenMetaStatSlot, eAutogenNarrativeStatSlot, ePlayerPass, ...), and the members S30 adds to structs the dedi
+  has (sLoadoutsData +167, sStatsData +221, per-character +21, per-weapon +4, ...). S30-only structs and members
+  that need them are skipped (the dedi's 40-struct cap). `--no-grow eSeasonFlavor,eModesFlavors,eRankedStatPeriod`:
+  their S30 members would only enlarge S21-era stat arrays (+5,000 entries).
+- `tools/pdef_count.py` counts flattened entries: original 23,066, augmented 25,415, cap 26,000 (SDK
+  `persistence_ext.cpp`; stock S3 16,000). The full augment was 30,736 and the dedi refused it.
+- The engine requires the pdef's version hash to be the last `blessed_pdef_versions` entry in
+  `cfg/server/persistent_player_data_manifest.rson`: `DG-A72EE5159C447511` appended. Originals of the autogen file
+  and manifest kept as `.s21`; `persistent_player_data.pdef` unchanged. The dedi reaches `ready` with it.
+
+Why not S30's whole pdef:
+
+- S30's pdef has 47 structs; the dedi's parser allows 40 (`cmp rbx, 0x28` at `r5apex_ds+0x35EF81`, struct table
+  of 40 x 48 bytes at pdef `+0x22530`, one 56-byte `sub2` element per struct). S30's client allows 56
+  (`0x492CD0`), 192 enums on both. Loading S30's pdef on the dedi fails with "Cannot define new struct ...
+  already at limit of 40 structs".
+- The dedi's scripts use names S30 dropped (`isACheater`, `credits`, `gen`, the legacy `ranked` struct,
+  `currentEliteStreak`, `rankedProvisional*`, `club*`, `questPopupLastSeen`, enums `eAutogenSlot`, `eQuestFlavor`).
+  `tools/pdef_merge.py` builds S30 + those (55 structs, 23 enums, dependency-ordered); not installed.
+- Raising the dedi's struct cap means moving the struct table, `sub2` and the control block inside
+  `persistence_ext.cpp`'s relocated pdef. A full `.text` scan finds about 40 control-block / `sub2` references that
+  module does not catalog (`+0xA2FD0`, `+0xA3010`, `+0xA3028` from several functions, the sub1 teardown at
+  `0x35FF60`) plus `0x5C8xxx` hits still to classify -- the reason it was not done.
+
 ## Engine limits hit by S30 content (2026-10-26)
 
 | limit | where | fix |

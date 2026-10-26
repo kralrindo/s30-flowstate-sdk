@@ -134,7 +134,7 @@
 					"name": "Signon complete",
 					"state": "wip",
 					"test": "client reaches SIGNONSTATE_FULL",
-					"note": "step 1 done (docs/12): the dedi's CONNACCEPT hands the S30 engine its native type-12 reply -> FullConnect, netchannel, signon 2, level load starts; next: the netchannel receive path"
+					"note": "steps 1-3 done (docs/12): native connect handed over, S3 netchannel parsed and dispatched, C2S rungs; dedi walks CONNECTED -> NEW -> PRESPAWN; string tables, SendTables, ClassInfo processed; next: tolerant decoders (609 unmatched SendProps)"
 				},
 				{
 					"id": "D3",

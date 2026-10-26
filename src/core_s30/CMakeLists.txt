@@ -38,8 +38,12 @@ add_sources( SOURCE_GROUP "Overlay"
 )
 
 add_sources( SOURCE_GROUP "Net"
+    "bridge_datablock_s30.cpp"
+    "bridge_datablock_s30.h"
     "bridge_handshake_s30.cpp"
     "bridge_handshake_s30.h"
+    "bridge_netchan_s30.cpp"
+    "bridge_netchan_s30.h"
     "bridge_signon_s30.cpp"
     "bridge_signon_s30.h"
     "net_diag_s30.cpp"
@@ -65,6 +69,7 @@ target_link_libraries( ${PROJECT_NAME} PRIVATE
     "d3dcompiler.lib"
     "libdetours"
     "libimgui"
+    "liblz4"
 )
 
 end_sources()

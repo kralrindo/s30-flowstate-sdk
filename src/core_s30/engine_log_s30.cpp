@@ -117,6 +117,62 @@ static int h_LogDirect(void* pSystem, int nChannel, int nSeverity, int nColor, c
 	return v_LogDirect(pSystem, nChannel, nSeverity, nColor, pszText);
 }
 
+// S30.1 0x4165E0 Host_Error(fmt, ...): formats into a stack buffer, runs
+// Host_Disconnect (0x271EE0) and longjmps back to the frame loop -- retail
+// prints the text nowhere, so it is logged here.
+typedef void (*HostError_t)(const char* pszFormat, ...);
+static const char* const s_pszPatternHostError =
+	"48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 48 81 EC 38 04 00 00 80 3D ?? ?? ?? ?? 00 48 8B D9 74 14 48 8D 0D";
+static HostError_t v_HostError = nullptr;
+
+static void h_HostError(const char* pszFormat, ...)
+{
+	char szText[1024];
+	va_list args;
+	va_start(args, pszFormat);
+	vsnprintf(szText, sizeof(szText), pszFormat ? pszFormat : "", args);
+	va_end(args);
+	S30Log("[ENGINE] Host_Error: %s\n", szText);
+	v_HostError("%s", szText);
+}
+
+// S30.1 0x4164D0 Host_EndGame(bShowMainMenu, fmt, ...): the same, with the
+// reason going only to the disconnect printer (0x24C700).
+typedef void (*HostEndGame_t)(unsigned char bShowMainMenu, const char* pszFormat, ...);
+static const char* const s_pszPatternHostEndGame =
+	"48 8B C4 48 89 50 10 4C 89 40 18 4C 89 48 20 53 56 57 48 81 EC 30 04 00 00 48 8B DA 48 8D 70 18 0F B6 F9 E8";
+static HostEndGame_t v_HostEndGame = nullptr;
+
+static void h_HostEndGame(unsigned char bShowMainMenu, const char* pszFormat, ...)
+{
+	char szText[1024];
+	va_list args;
+	va_start(args, pszFormat);
+	vsnprintf(szText, sizeof(szText), pszFormat ? pszFormat : "", args);
+	va_end(args);
+	S30Log("[ENGINE] Host_EndGame: %s\n", szText);
+	v_HostEndGame(bShowMainMenu, "%s", szText);
+}
+
+// S30.1 0x251220: the datatable code's warning ("No matching RecvTable ...",
+// "SetupClientSendTableHierarchy: ..."), formatted on the stack and dropped in retail.
+typedef int (*DataTableWarning_t)(const char* pszFormat, ...);
+static const char* const s_pszPatternDataTableWarning =
+	"48 89 4C 24 08 48 89 54 24 10 4C 89 44 24 18 4C 89 4C 24 20 53 57 B8 38 10 00 00 E8 ?? ?? ?? ?? 48 2B E0 48 8B D9 48 8D BC 24 58 10 00 00 E8";
+static DataTableWarning_t v_DataTableWarning = nullptr;
+
+static int h_DataTableWarning(const char* pszFormat, ...)
+{
+	char szText[1024];
+	va_list args;
+	va_start(args, pszFormat);
+	vsnprintf(szText, sizeof(szText), pszFormat ? pszFormat : "", args);
+	va_end(args);
+	const size_t nLen = strlen(szText);
+	S30Log("[ENGINE] DataTable: %s%s", szText, nLen && szText[nLen - 1] == '\n' ? "" : "\n");
+	return v_DataTableWarning("%s", szText);
+}
+
 bool S30EngineLog_Install(void)
 {
 	int nMatches = 0;
@@ -131,6 +187,16 @@ bool S30EngineLog_Install(void)
 	if (!pCoreMsgV)
 		S30Log("[ENGINE-LOG] CoreMsgV unresolved (matches=%d) -- only LogDirect captured\n", nMatches);
 
+	v_HostError = reinterpret_cast<HostError_t>(S30Pattern_FindUnique(s_pszPatternHostError, &nMatches));
+	if (!v_HostError)
+		S30Log("[ENGINE-LOG] Host_Error unresolved (matches=%d)\n", nMatches);
+	v_HostEndGame = reinterpret_cast<HostEndGame_t>(S30Pattern_FindUnique(s_pszPatternHostEndGame, &nMatches));
+	if (!v_HostEndGame)
+		S30Log("[ENGINE-LOG] Host_EndGame unresolved (matches=%d)\n", nMatches);
+	v_DataTableWarning = reinterpret_cast<DataTableWarning_t>(S30Pattern_FindUnique(s_pszPatternDataTableWarning, &nMatches));
+	if (!v_DataTableWarning)
+		S30Log("[ENGINE-LOG] DataTable warning unresolved (matches=%d)\n", nMatches);
+
 	v_LogDirect = reinterpret_cast<LogDirect_t>(pTarget);
 	v_CoreMsgV = reinterpret_cast<CoreMsgV_t>(pCoreMsgV);
 	DetourTransactionBegin();
@@ -138,6 +204,12 @@ bool S30EngineLog_Install(void)
 	DetourAttach(&reinterpret_cast<PVOID&>(v_LogDirect), h_LogDirect);
 	if (v_CoreMsgV)
 		DetourAttach(&reinterpret_cast<PVOID&>(v_CoreMsgV), h_CoreMsgV);
+	if (v_HostError)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_HostError), h_HostError);
+	if (v_HostEndGame)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_HostEndGame), h_HostEndGame);
+	if (v_DataTableWarning)
+		DetourAttach(&reinterpret_cast<PVOID&>(v_DataTableWarning), h_DataTableWarning);
 	const LONG nError = DetourTransactionCommit();
 	S30Log("[ENGINE-LOG] LogDirect @ 0x%llX, CoreMsgV @ 0x%llX %s (commit %ld)\n",
 		static_cast<unsigned long long>(S30Pattern_Rva(pTarget)),

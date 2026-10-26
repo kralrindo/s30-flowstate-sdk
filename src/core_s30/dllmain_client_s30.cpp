@@ -23,6 +23,7 @@
 #include "net_diag_s30.h"
 #include "identity_s30.h"
 #include "bridge_signon_s30.h"
+#include "bridge_netchan_s30.h"
 
 #pragma comment(lib, "psapi.lib")
 
@@ -126,6 +127,7 @@ extern "C" __declspec(dllexport) bool S30_EarlyInit(void)
 	S30ConCommand_Init();
 	S30NetDiag_Install();
 	S30Signon_Install();
+	S30Netchan_Install();
 	S30Identity_Init();
 	S30Console_StartInput();
 
