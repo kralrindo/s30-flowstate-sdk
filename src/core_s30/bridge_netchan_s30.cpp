@@ -37,6 +37,7 @@
 #include "bridge_usermessage_s30.h"
 #include "bridge_c2s_s30.h"
 #include "bridge_hud_s30.h"
+#include "bridge_props_s30.h"
 #include "engine/client/net_bridge_skip.h" // engine-free S3 message body widths
 #include "concommand_s30.h"
 #include "console_s30.h"
@@ -523,6 +524,16 @@ static int Netchan_FillDecoder(uint8_t* pDecoder)
 			continue;
 		const uint8_t* const pSend = ppSend[i];
 		const int nType = pSend ? *reinterpret_cast<const int*>(pSend) : -1;
+		// SendProps S30 re-typed: an adapter writes S30's field (bridge_props, docs/20).
+		uint8_t* const pAdapter = S30Props_Adapter(*reinterpret_cast<const char* const*>(pRoot + RT_NAME), pSend);
+		if (pAdapter)
+		{
+			ppProps[i] = pAdapter;
+			ppOwners[i] = pRoot;
+			S30LogFile("[NETCHAN] decoder '%s': %s adapted to S30's field\n", *reinterpret_cast<const char* const*>(pRoot + RT_NAME),
+				*reinterpret_cast<const char* const*>(pSend + 64));
+			continue;
+		}
 		const uint8_t* const pElement = nType == 5 ? *reinterpret_cast<const uint8_t* const*>(pSend + 24) : nullptr;
 		uint8_t* const pDummy = Netchan_DummyProp(nType, pElement ? *reinterpret_cast<const int*>(pElement) : -1);
 		if (!pDummy)
@@ -1511,6 +1522,7 @@ static bool Netchan_OnSnapshot(uint8_t* pChan, S30BitReader_t& r)
 		AcquireSRWLockExclusive(&s_lock);
 		s_nAckTick = static_cast<int>(nTick1);
 		ReleaseSRWLockExclusive(&s_lock);
+		S30Props_OnSnapshot();
 		S30ScriptRemote_OnSnapshot(nTick1);
 	}
 	return true; // the payload is consumed either way: the stream stays aligned

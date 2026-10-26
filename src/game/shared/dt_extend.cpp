@@ -26,6 +26,7 @@
 #include "game/shared/scriptnetdata_ext.h"
 #include "common/global.h" // host_timescale
 #include "game/server/consumable_inv.h"
+#include "game/shared/activity_s3_to_s21.h" // Bridge_ClientIsS30
 #include "game/server/jetdrive.h"
 #include "game/server/weapon_custom_activity.h"
 #include "game/server/player_launch.h"
@@ -1659,10 +1660,15 @@ static void ConsumableInv_RetypeInTree(uintptr_t table, uintptr_t* seen, int& se
 	if (tn && strcmp(tn, "m_consumableInventory") == 0)
 	{
 		if (*(int*)(props + SP_NBITS) == 32) return;   // idempotent: already widened
+		// The S30.1 client receives each slot as Int64 (type bits 0..15, count 16..31,
+		// flags 32..63; s30/docs/20): same value, Int64 encoding (as m_modInventory's).
+		const bool bS30 = Bridge_ClientIsS30();
 		int converted = 0;
 		for (int j = 0; j < nProps && j < 32; ++j)
 		{
 			uint8_t* p = props + (uint64_t)j * SP_SIZE;
+			if (bS30)
+				*(int*)(p + SP_TYPE)        = 7;                  // DPT_Int64
 			*(int*)(p + SP_NBITS)           = 32;
 			*(const char**)(p + SP_VARNAME) = ModInv_ElemName(j);
 			*(int*)(p + SP_FLAGS)          |= 1;                  // SPROP_UNSIGNED

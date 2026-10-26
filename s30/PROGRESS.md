@@ -145,7 +145,7 @@
 - C2S: the client's own messages (commands, SetConVar, chat, loot pickup, gamepad) serialized with their own writers
   and relayed with the dedi's dedupe sequences. Client script calls go by name: S30 and the dedi number server
   functions differently; the dedi's server.dll got a name-carried receive path (docs/15).
-- Dedi translates activities to S30's numbering (`+bridge_client_activity_set s30`), the client translates the
+- Dedi translates activities to S30's numbering (`+bridge_client_set s30`), the client translates the
   queued player activity (docs/14); weapon RNG seed derived the dedi's way.
 - Mantle boost stays S30-native (user decision): the dedi's boost now uses S30's values and class-mod gate (docs/19).
 - Dedi script fixes found on the way (originals `.s21`): heal-item numbering, challenges bool, abilities whose S30

@@ -61,7 +61,7 @@ Status: **done** (in `src/core_s30`, verified in game), **todo**, **n/a** (S30 d
 
 | S21 | what | S30 |
 |---|---|---|
-| `activity_s3_to_s21*` | activity ids S3 → client | done: dedi `+bridge_client_activity_set s30` (964 mapped), client queued-activity hook 0x619E30 (docs/14) |
+| `activity_s3_to_s21*` | activity ids S3 → client | done: dedi `+bridge_client_set s30` (964 mapped), client queued-activity hook 0x619E30 (docs/14) |
 | `weapstate_s3_to_s21.h`, `weapon_customact_c2s_xlat` | weapon state / custom activity ids | custom activity: done with the activity set; weapon state: S30 order unproven (docs/14) |
 | `offhand_slots_ext`, `weapon_dualwield_slot_patch`, `offhand_*` | offhand slot layout | todo |
 | `scriptnetdata_ext`, `dt_extend_*` | script netvar / datatable extensions | todo |

@@ -316,7 +316,7 @@ Inventory and status in docs/13; specs in docs/14–16.
 - C2S (`bridge_c2s`): each message the engine sends is serialized with its own WriteToBuffer (body only; S30's
   bf_write ORs bits into dwords, so the buffer starts zeroed) and queued in the bridge's C2S stream with the
   dedi's dedupe sequences. Client script calls go by name; the dedi's server.dll got the matching receive path.
-- Activities: the dedi translates to S30 ids (`+bridge_client_activity_set s30`), the client translates the
+- Activities: the dedi translates to S30 ids (`+bridge_client_set s30`), the client translates the
   queued player activity; weapon RNG seed matched (`bridge_cmdseed`).
 - Test helper: `sdk_script_call <client function>` runs a no-argument CLIENT VM function on the engine thread.
 

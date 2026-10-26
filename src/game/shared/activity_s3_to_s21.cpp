@@ -7,6 +7,7 @@
 //=============================================================================//
 #include "core/stdafx.h"
 #include "tier1/convar.h"
+#include "tier0/commandline.h"
 #include "tier1/utlstring.h"
 #include "activity.h"
 #include "activity_s3_to_s21.h"
@@ -48,12 +49,20 @@ static ConVar bridge_act_xlat_unmapped("bridge_act_xlat_unmapped", "1", FCVAR_RE
 //-----------------------------------------------------------------------------
 // Purpose: id<=0 is already "no activity" -- pass through, do not rewrite.
 //-----------------------------------------------------------------------------
-// Which client's activity numbering the map targets. Read once, when the map is
-// built (host-state init), so it is a launch setting: +bridge_client_activity_set s30.
-// The S30.1 client (s30/docs/14) registers its own list (0xAA11C0); matched by name
-// the same way as S21's.
-static ConVar bridge_client_activity_set("bridge_client_activity_set", "s21", FCVAR_RELEASE,
-	"Client activity numbering the dedi translates to: s21 (default) or s30. Launch setting.");
+// The client build this dedi serves: its activity numbering (the S30.1 client registers
+// its own list, 0xAA11C0, s30/docs/14) and the datatable shapes it receives (docs/20).
+// A launch setting: +bridge_client_set s30. The SendTables are rewritten before the
+// command line's convars are applied, so the command line is read directly too.
+static ConVar bridge_client_set("bridge_client_set", "s21", FCVAR_RELEASE,
+	"Client build this dedi serves: s21 (default) or s30 (activity ids, datatable shapes). Launch setting.");
+
+bool Bridge_ClientIsS30(void)
+{
+	const char* pszValue = nullptr;
+	if (CommandLine()->CheckParm("+bridge_client_set", &pszValue) && pszValue && V_stricmp(pszValue, "s30") == 0)
+		return true;
+	return V_stricmp(bridge_client_set.GetString(), "s30") == 0;
+}
 
 static inline int Activity_Unmapped(const int id)
 {
@@ -108,7 +117,7 @@ void Bridge_BuildS3ToS21ActivityMap()
 	for (int i = 0; i < kS21MapSize; ++i)
 		s_s21ToS3[i] = -1;
 
-	const bool bS30 = V_stricmp(bridge_client_activity_set.GetString(), "s30") == 0;
+	const bool bS30 = Bridge_ClientIsS30();
 	const S21ActivityEntry* const pClientTable = bS30 ? kS30Activities : kS21Activities;
 	const int nClientCount = bS30 ? kS30ActivityCount : kS21ActivityCount;
 

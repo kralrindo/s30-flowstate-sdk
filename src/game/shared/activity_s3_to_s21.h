@@ -16,4 +16,7 @@ int  Bridge_TranslateS3ActivityToS21(int s3_id);
 // [WEAP-ACT-C2S] S21->dedi at the usercmd boundary; dedi->S21 proxy maps it back.
 int  Bridge_TranslateS21ActivityToS3(int s21_id);
 
+// +bridge_client_set s30: the dedi serves the S30.1 client (activity ids, datatable shapes).
+bool Bridge_ClientIsS30(void);
+
 #endif // ACTIVITY_S3_TO_S21_H

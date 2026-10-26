@@ -5,7 +5,7 @@
 // Purpose: the dedi's queued player activity (S3 ids) on the S30 client: the
 // activity selector reads it translated to S30 numbering (s30/docs/14).
 // Weapon activities come from the dedi already translated
-// (+bridge_client_activity_set s30 on the dedi).
+// (+bridge_client_set s30 on the dedi).
 //
 //=============================================================================//
 
